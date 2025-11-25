@@ -379,8 +379,7 @@ public abstract class DebeziumEventDeserializationSchema extends SourceRecordEve
             // Format: ISO-8601 with timezone offset (e.g., "2020-07-17T18:00:22+00:00")
             if (ZonedTimestamp.SCHEMA_NAME.equals(schema.name())) {
                 // Parse using Debezium's ZonedTimestamp formatter
-                OffsetDateTime offsetDateTime =
-                        OffsetDateTime.parse(str, ZonedTimestamp.FORMATTER);
+                OffsetDateTime offsetDateTime = OffsetDateTime.parse(str, ZonedTimestamp.FORMATTER);
                 return ZonedTimestampData.fromOffsetDateTime(offsetDateTime);
             } else {
                 // Fallback to standard ISO-8601 parsing
