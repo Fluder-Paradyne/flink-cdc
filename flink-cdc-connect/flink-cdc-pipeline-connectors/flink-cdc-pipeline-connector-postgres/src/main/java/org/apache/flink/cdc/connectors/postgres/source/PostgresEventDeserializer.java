@@ -25,6 +25,8 @@ import org.apache.flink.cdc.connectors.postgres.table.PostgreSQLReadableMetadata
 import org.apache.flink.cdc.debezium.event.DebeziumEventDeserializationSchema;
 import org.apache.flink.cdc.debezium.table.DebeziumChangelogMode;
 import org.apache.flink.table.data.TimestampData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.debezium.data.Envelope;
@@ -48,10 +50,25 @@ import java.util.Optional;
 @Internal
 public class PostgresEventDeserializer extends DebeziumEventDeserializationSchema {
 
+    private static final Logger LOG = LoggerFactory.getLogger(PostgresEventDeserializer.class);
+
     private static final long serialVersionUID = 1L;
     private List<PostgreSQLReadableMetadata> readableMetadataList;
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    /** Helper method to convert bytes to hex string for logging */
+    private static String bytesToHex(byte[] bytes, int maxLength) {
+        StringBuilder sb = new StringBuilder();
+        int len = Math.min(bytes.length, maxLength);
+        for (int i = 0; i < len; i++) {
+            sb.append(String.format("%02X ", bytes[i] & 0xFF));
+        }
+        if (bytes.length > maxLength) {
+            sb.append("...");
+        }
+        return sb.toString();
+    }
 
     public PostgresEventDeserializer(DebeziumChangelogMode changelogMode) {
         super(new PostgresSchemaDataTypeInference(), changelogMode);
@@ -149,7 +166,125 @@ public class PostgresEventDeserializer extends DebeziumEventDeserializationSchem
                         String.format("Failed to convert %s to geometry JSON.", dbzObj), e);
             }
         } else {
-            return BinaryStringData.fromString(dbzObj.toString());
+            // Handle byte[] arrays (e.g., JSONB binary data from PostgreSQL 17)
+            // PostgreSQL 17 may send JSONB as binary data that needs to be decoded as UTF-8
+            if (dbzObj instanceof byte[]) {
+                byte[] bytes = (byte[]) dbzObj;
+                
+                // Log deployment verification - this confirms the patched code is running
+                LOG.info(
+                        "[PATCHED CODE] PostgresEventDeserializer.convertToString detected byte[] input "
+                                + "(likely JSONB from PostgreSQL 17). Schema name: {}, Schema type: {}, Bytes length: {}, "
+                                + "First byte: 0x{}, First 50 bytes hex: {}",
+                        schema != null ? schema.name() : "null",
+                        schema != null && schema.type() != null ? schema.type().toString() : "null",
+                        bytes.length,
+                        bytes.length > 0 ? String.format("%02X", bytes[0] & 0xFF) : "N/A",
+                        bytesToHex(bytes, 50));
+                
+                // Try to decode as UTF-8 string, which is the standard encoding for JSONB text
+                // representation in PostgreSQL
+                try {
+                    // PostgreSQL JSONB binary format: version byte (0x01) + JSON text in UTF-8
+                    // Try decoding from the start first (in case Debezium already stripped the version byte)
+                    String jsonbStr = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+                    // Validate it looks like JSON (starts with { or [)
+                    if (jsonbStr.trim().startsWith("{") || jsonbStr.trim().startsWith("[")) {
+                        LOG.debug(
+                                "[PATCHED CODE] Successfully decoded JSONB from byte[] (direct UTF-8). "
+                                        + "Length: {}, Preview: {}",
+                                jsonbStr.length(),
+                                jsonbStr.length() > 100 ? jsonbStr.substring(0, 100) + "..." : jsonbStr);
+                        return BinaryStringData.fromString(jsonbStr);
+                    }
+                    // If not valid JSON, try skipping version byte
+                    if (bytes.length > 0 && bytes[0] == 0x01) {
+                        LOG.debug(
+                                "[PATCHED CODE] Detected version byte 0x01, attempting to decode with version byte skipped");
+                        jsonbStr = new String(bytes, 1, bytes.length - 1, java.nio.charset.StandardCharsets.UTF_8);
+                        if (jsonbStr.trim().startsWith("{") || jsonbStr.trim().startsWith("[")) {
+                            LOG.debug(
+                                    "[PATCHED CODE] Successfully decoded JSONB from byte[] (skipped version byte). "
+                                            + "Length: {}, Preview: {}",
+                                    jsonbStr.length(),
+                                    jsonbStr.length() > 100 ? jsonbStr.substring(0, 100) + "..." : jsonbStr);
+                            return BinaryStringData.fromString(jsonbStr);
+                        }
+                    }
+                    // If still not valid, return as-is (might be corrupted or different format)
+                    LOG.warn(
+                            "[PATCHED CODE] Decoded byte[] but result doesn't look like JSON. "
+                                    + "Returning as-is. Length: {}, Preview: {}",
+                            jsonbStr.length(),
+                            jsonbStr.length() > 100 ? jsonbStr.substring(0, 100) + "..." : jsonbStr);
+                    return BinaryStringData.fromString(jsonbStr);
+                } catch (Exception e) {
+                    // Fallback to base64 encoding if UTF-8 decoding fails
+                    LOG.warn(
+                            "[PATCHED CODE] Failed to decode byte[] as UTF-8, falling back to base64 encoding. "
+                                    + "Error: {}",
+                            e.getMessage());
+                    return BinaryStringData.fromString(
+                            java.util.Base64.getEncoder().encodeToString(bytes));
+                }
+            } else if (dbzObj instanceof java.nio.ByteBuffer) {
+                java.nio.ByteBuffer byteBuffer = (java.nio.ByteBuffer) dbzObj;
+                byte[] bytes = new byte[byteBuffer.remaining()];
+                byteBuffer.get(bytes);
+                
+                LOG.info(
+                        "[PATCHED CODE] PostgresEventDeserializer.convertToString detected ByteBuffer input "
+                                + "(likely JSONB from PostgreSQL 17). Schema: {}, Bytes length: {}",
+                        schema != null ? schema.name() : "null",
+                        bytes.length);
+                
+                try {
+                    String jsonbStr = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+                    if (jsonbStr.trim().startsWith("{") || jsonbStr.trim().startsWith("[")) {
+                        LOG.debug(
+                                "[PATCHED CODE] Successfully decoded JSONB from ByteBuffer (direct UTF-8). "
+                                        + "Length: {}, Preview: {}",
+                                jsonbStr.length(),
+                                jsonbStr.length() > 100 ? jsonbStr.substring(0, 100) + "..." : jsonbStr);
+                        return BinaryStringData.fromString(jsonbStr);
+                    }
+                    if (bytes.length > 0 && bytes[0] == 0x01) {
+                        LOG.debug(
+                                "[PATCHED CODE] Detected version byte 0x01 in ByteBuffer, attempting to decode with version byte skipped");
+                        jsonbStr = new String(bytes, 1, bytes.length - 1, java.nio.charset.StandardCharsets.UTF_8);
+                        if (jsonbStr.trim().startsWith("{") || jsonbStr.trim().startsWith("[")) {
+                            LOG.debug(
+                                    "[PATCHED CODE] Successfully decoded JSONB from ByteBuffer (skipped version byte). "
+                                            + "Length: {}, Preview: {}",
+                                    jsonbStr.length(),
+                                    jsonbStr.length() > 100 ? jsonbStr.substring(0, 100) + "..." : jsonbStr);
+                            return BinaryStringData.fromString(jsonbStr);
+                        }
+                    }
+                    LOG.warn(
+                            "[PATCHED CODE] Decoded ByteBuffer but result doesn't look like JSON. "
+                                    + "Returning as-is. Length: {}, Preview: {}",
+                            jsonbStr.length(),
+                            jsonbStr.length() > 100 ? jsonbStr.substring(0, 100) + "..." : jsonbStr);
+                    return BinaryStringData.fromString(jsonbStr);
+                } catch (Exception e) {
+                    LOG.warn(
+                            "[PATCHED CODE] Failed to decode ByteBuffer as UTF-8, falling back to base64 encoding. "
+                                    + "Error: {}",
+                            e.getMessage());
+                    return BinaryStringData.fromString(
+                            java.util.Base64.getEncoder().encodeToString(bytes));
+                }
+            } else {
+                if (LOG.isTraceEnabled()) {
+                    LOG.trace(
+                            "[PATCHED CODE] PostgresEventDeserializer.convertToString handling non-binary object. "
+                                    + "Type: {}, Schema: {}",
+                            dbzObj != null ? dbzObj.getClass().getName() : "null",
+                            schema != null ? schema.name() : "null");
+                }
+                return BinaryStringData.fromString(dbzObj.toString());
+            }
         }
     }
 }

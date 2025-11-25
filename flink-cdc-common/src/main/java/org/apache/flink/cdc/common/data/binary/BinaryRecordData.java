@@ -31,6 +31,8 @@ import org.apache.flink.cdc.common.data.ZonedTimestampData;
 import org.apache.flink.cdc.common.utils.Preconditions;
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.core.memory.MemorySegmentFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.ByteOrder;
 
@@ -56,6 +58,8 @@ import java.nio.ByteOrder;
  */
 @Internal
 public final class BinaryRecordData extends BinarySection implements RecordData, NullAwareGetters {
+
+    private static final Logger LOG = LoggerFactory.getLogger(BinaryRecordData.class);
 
     public static final boolean LITTLE_ENDIAN =
             (ByteOrder.nativeOrder() == ByteOrder.LITTLE_ENDIAN);
@@ -177,9 +181,65 @@ public final class BinaryRecordData extends BinarySection implements RecordData,
 
     @Override
     public ZonedTimestampData getZonedTimestamp(int pos, int precision) {
-        String[] parts = getString(pos).toString().split(TIMESTAMP_DELIMITER);
-        return ZonedTimestampData.of(
-                Long.parseLong(parts[0]), Integer.parseInt(parts[1]), parts[2]);
+        String timestampStr = getString(pos).toString();
+        
+        // Always log INFO level for schema mismatches to help diagnose issues
+        LOG.info(
+                "[PATCHED CODE] BinaryRecordData.getZonedTimestamp called at position {} with precision {}. "
+                        + "String length: {}, preview: {}, first 100 chars: {}",
+                pos, precision, timestampStr.length(),
+                timestampStr.length() > 50 ? timestampStr.substring(0, 50) + "..." : timestampStr,
+                timestampStr.length() > 100 ? timestampStr.substring(0, 100) : timestampStr);
+        
+        // Check if this looks like JSONB data (starts with binary characters or JSON)
+        boolean looksLikeJsonb = timestampStr.trim().startsWith("{") 
+                || timestampStr.trim().startsWith("[")
+                || (timestampStr.length() > 0 && Character.isISOControl(timestampStr.charAt(0)) && timestampStr.contains("{"));
+        
+        if (looksLikeJsonb) {
+            LOG.error(
+                    "[PATCHED CODE] CRITICAL: Position {} is being read as TIMESTAMP_WITH_TIME_ZONE but contains JSONB data! "
+                            + "This indicates a schema mismatch. Data preview: {}, "
+                            + "Total arity: {}, Is null at position: {}",
+                    pos,
+                    timestampStr.length() > 300 ? timestampStr.substring(0, 300) + "..." : timestampStr,
+                    getArity(),
+                    isNullAt(pos));
+        }
+        
+        String[] parts = timestampStr.split(TIMESTAMP_DELIMITER);
+        if (parts.length != 3) {
+            String errorMsg = String.format(
+                    "Invalid zoned timestamp format at position %d. Expected format: 'timestamp//nanos//zone', "
+                            + "but got: '%s'. This may indicate a schema mismatch (e.g., JSONB field being read as TIMESTAMP_WITH_TIME_ZONE). "
+                            + "Record arity: %d",
+                    pos, timestampStr.length() > 100 ? timestampStr.substring(0, 100) + "..." : timestampStr, getArity());
+            LOG.error(
+                    "[PATCHED CODE] Schema mismatch detected in getZonedTimestamp at position {}. "
+                            + "This likely indicates JSONB data is being incorrectly read as TIMESTAMP_WITH_TIME_ZONE. "
+                            + "String preview: {}, Record arity: {}, Split parts: {}",
+                    pos, timestampStr.length() > 200 ? timestampStr.substring(0, 200) + "..." : timestampStr, 
+                    getArity(), parts.length);
+            throw new IllegalArgumentException(errorMsg);
+        }
+        try {
+            return ZonedTimestampData.of(
+                    Long.parseLong(parts[0]), Integer.parseInt(parts[1]), parts[2]);
+        } catch (NumberFormatException e) {
+            String errorMsg = String.format(
+                    "Failed to parse zoned timestamp at position %d. Expected format: 'timestamp//nanos//zone', "
+                            + "but got: '%s'. This may indicate a schema mismatch (e.g., JSONB field being read as TIMESTAMP_WITH_TIME_ZONE). "
+                            + "Original error: %s",
+                    pos,
+                    timestampStr.length() > 100 ? timestampStr.substring(0, 100) + "..." : timestampStr,
+                    e.getMessage());
+            LOG.error(
+                    "[PATCHED CODE] NumberFormatException in getZonedTimestamp at position {}. "
+                            + "This likely indicates JSONB data is being incorrectly read as TIMESTAMP_WITH_TIME_ZONE. "
+                            + "String preview: {}, Error: {}",
+                    pos, timestampStr.length() > 200 ? timestampStr.substring(0, 200) + "..." : timestampStr, e.getMessage());
+            throw new IllegalArgumentException(errorMsg, e);
+        }
     }
 
     @Override

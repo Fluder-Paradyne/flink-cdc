@@ -101,7 +101,19 @@ public class IcebergTypeUtils {
     public static List<RecordData.FieldGetter> createFieldGetters(Schema schema, ZoneId zoneId) {
         List<Column> columns = schema.getColumns();
         List<RecordData.FieldGetter> fieldGetters = new ArrayList<>(columns.size());
+        
+        // Log schema information for debugging
+        org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(IcebergTypeUtils.class);
+        logger.info(
+                "[PATCHED CODE] IcebergTypeUtils.createFieldGetters: Creating field getters. "
+                        + "Total columns: {}",
+                columns.size());
+        
         for (int i = 0; i < columns.size(); i++) {
+            Column column = columns.get(i);
+            logger.info(
+                    "[PATCHED CODE] Creating field getter at position {}: column name='{}', type={}, nullable={}",
+                    i, column.getName(), column.getType().getTypeRoot(), column.getType().isNullable());
             fieldGetters.add(
                     IcebergTypeUtils.createFieldGetter(columns.get(i).getType(), i, zoneId));
         }
@@ -180,11 +192,17 @@ public class IcebergTypeUtils {
                                                 .toInstant());
                 break;
             case TIMESTAMP_WITH_TIME_ZONE:
+                org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(IcebergTypeUtils.class);
                 fieldGetter =
-                        (row) ->
-                                TimestampData.fromInstant(
-                                        row.getZonedTimestamp(fieldPos, getPrecision(fieldType))
-                                                .toInstant());
+                        (row) -> {
+                            logger.info(
+                                    "[PATCHED CODE] IcebergTypeUtils: Reading TIMESTAMP_WITH_TIME_ZONE at field position {}. "
+                                            + "Row arity: {}, Is null: {}",
+                                    fieldPos, row.getArity(), row.isNullAt(fieldPos));
+                            return TimestampData.fromInstant(
+                                    row.getZonedTimestamp(fieldPos, getPrecision(fieldType))
+                                            .toInstant());
+                        };
                 break;
             case ROW:
                 final int rowFieldCount = getFieldCount(fieldType);
