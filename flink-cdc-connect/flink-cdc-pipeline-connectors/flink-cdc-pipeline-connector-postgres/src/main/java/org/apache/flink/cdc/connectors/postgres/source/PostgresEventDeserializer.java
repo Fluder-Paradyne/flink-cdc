@@ -275,6 +275,72 @@ public class PostgresEventDeserializer extends DebeziumEventDeserializationSchem
                     return BinaryStringData.fromString(
                             java.util.Base64.getEncoder().encodeToString(bytes));
                 }
+            } else if (dbzObj instanceof String) {
+                // Handle String that might contain JSONB binary data (PostgreSQL 17 may send JSONB as String with binary chars)
+                String str = (String) dbzObj;
+                
+                // Check if string contains binary characters and JSON-like content
+                // This happens when JSONB binary data is converted to String incorrectly
+                boolean hasBinaryChars = false;
+                boolean hasJsonContent = false;
+                
+                for (int i = 0; i < Math.min(str.length(), 200); i++) {
+                    char c = str.charAt(i);
+                    if (Character.isISOControl(c) && c != '\n' && c != '\r' && c != '\t') {
+                        hasBinaryChars = true;
+                    }
+                    if (c == '{' || c == '[') {
+                        hasJsonContent = true;
+                        break;
+                    }
+                }
+                
+                if (hasBinaryChars && hasJsonContent) {
+                    LOG.info(
+                            "[PATCHED CODE] PostgresEventDeserializer.convertToString detected String with binary characters and JSON content "
+                                    + "(likely JSONB from PostgreSQL 17 that was incorrectly converted). "
+                                    + "Schema name: {}, String length: {}, Preview: {}",
+                            schema != null ? schema.name() : "null",
+                            str.length(),
+                            str.length() > 100 ? str.substring(0, 100) + "..." : str);
+                    
+                    // Try to extract JSON part by finding the first { or [
+                    int jsonStart = -1;
+                    for (int i = 0; i < str.length(); i++) {
+                        char c = str.charAt(i);
+                        if (c == '{' || c == '[') {
+                            jsonStart = i;
+                            break;
+                        }
+                    }
+                    
+                    if (jsonStart >= 0) {
+                        String jsonPart = str.substring(jsonStart);
+                        // Validate it looks like JSON
+                        if (jsonPart.trim().startsWith("{") || jsonPart.trim().startsWith("[")) {
+                            LOG.debug(
+                                    "[PATCHED CODE] Extracted JSON from String with binary prefix. JSON length: {}, Preview: {}",
+                                    jsonPart.length(),
+                                    jsonPart.length() > 100 ? jsonPart.substring(0, 100) + "..." : jsonPart);
+                            return BinaryStringData.fromString(jsonPart);
+                        }
+                    }
+                    
+                    // If extraction failed, return cleaned version (remove null bytes and control chars)
+                    String cleaned = str.replaceAll("[\u0000-\u0008\u000B\u000C\u000E-\u001F]", "");
+                    LOG.warn(
+                            "[PATCHED CODE] Could not extract clean JSON from String. Returning cleaned version. "
+                                    + "Original length: {}, Cleaned length: {}",
+                            str.length(), cleaned.length());
+                    return BinaryStringData.fromString(cleaned);
+                } else {
+                    if (LOG.isTraceEnabled()) {
+                        LOG.trace(
+                                "[PATCHED CODE] PostgresEventDeserializer.convertToString processing String object (no binary chars detected): {}",
+                                str.length() > 50 ? str.substring(0, 50) + "..." : str);
+                    }
+                    return BinaryStringData.fromString(str);
+                }
             } else {
                 if (LOG.isTraceEnabled()) {
                     LOG.trace(
