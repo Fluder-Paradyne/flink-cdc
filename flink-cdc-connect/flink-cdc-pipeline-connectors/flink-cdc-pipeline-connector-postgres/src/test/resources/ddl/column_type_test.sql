@@ -45,6 +45,7 @@ CREATE TABLE full_types
     character_varying_c CHARACTER VARYING(20),
     timestamp3_c        TIMESTAMP(3),
     timestamp6_c        TIMESTAMP(6),
+    timestamptz_c       TIMESTAMPTZ,
     date_c              DATE,
     time_c              TIME(0),
     default_numeric_c   NUMERIC,
@@ -78,6 +79,7 @@ ALTER TABLE inventory.full_types
 INSERT INTO inventory.full_types
 VALUES (1, '2', 32767, 65535, 2147483647, 5.5, 6.6, 123.12345, 404.4443, true,
         'Hello World', 'a', 'abc', 'abcd..xyz', '2020-07-17 18:00:22.123', '2020-07-17 18:00:22.123456',
+        '2020-07-17 18:00:22.123456+08:00',
         '2020-07-17', '18:00:22', 500,'SRID=3187;POINT(174.9479 -36.7208)'::geometry,
         'MULTILINESTRING((169.1321 -44.7032, 167.8974 -44.6414))'::geography,B'1',B'00001010',B'00101010','abc','2 weeks','{"order_id": 10248, "product": "Notebook", "quantity": 5}','{"order_id": 10249, "product": "Pen", "quantity": 10}'::jsonb,'<user>
         <id>123</id>
