@@ -3,15 +3,16 @@ package org.apache.flink.cdc.connectors.clickhouse.sink;
 import org.apache.flink.cdc.common.configuration.ConfigOption;
 import org.apache.flink.cdc.common.configuration.ConfigOptions;
 
-import java.util.Set;
 import java.util.HashSet;
+import java.util.Set;
 
 public class ClickHouseDataSinkOptions {
     public static final ConfigOption<String> URL =
             ConfigOptions.key("url")
                     .stringType()
                     .noDefaultValue()
-                    .withDescription("ClickHouse server URL, e.g., 'http://localhost:8123' or 'clickhouse://localhost:9000'.");
+                    .withDescription(
+                            "ClickHouse server URL, e.g., 'http://localhost:8123' or 'clickhouse://localhost:9000'.");
 
     public static final ConfigOption<String> USERNAME =
             ConfigOptions.key("username")
@@ -41,7 +42,8 @@ public class ClickHouseDataSinkOptions {
             ConfigOptions.key("sink.flush-interval-ms")
                     .longType()
                     .defaultValue(5000L)
-                    .withDescription("Flush interval in milliseconds for writing data to ClickHouse.");
+                    .withDescription(
+                            "Flush interval in milliseconds for writing data to ClickHouse.");
 
     public static final ConfigOption<Integer> SINK_MAX_RETRIES =
             ConfigOptions.key("sink.max-retries")
@@ -60,7 +62,6 @@ public class ClickHouseDataSinkOptions {
                     .intType()
                     .defaultValue(30000)
                     .withDescription("Socket timeout in milliseconds.");
-
 
     public static Set<ConfigOption<?>> getRequiredOptions() {
         Set<ConfigOption<?>> options = new HashSet<>();

@@ -22,7 +22,6 @@ import org.apache.flink.cdc.common.configuration.ConfigOption;
 import org.apache.flink.cdc.common.configuration.Configuration;
 import org.apache.flink.cdc.common.factories.DataSinkFactory;
 import org.apache.flink.cdc.common.sink.DataSink;
-
 import org.apache.flink.cdc.connectors.clickhouse.sink.ClickHouseDataSinkOptions;
 
 import java.util.HashSet;
