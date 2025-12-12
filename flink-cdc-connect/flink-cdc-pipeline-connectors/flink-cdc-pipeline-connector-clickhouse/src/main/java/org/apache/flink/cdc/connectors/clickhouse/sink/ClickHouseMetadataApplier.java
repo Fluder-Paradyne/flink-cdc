@@ -29,7 +29,6 @@ import org.apache.flink.cdc.common.event.TableId;
 import org.apache.flink.cdc.common.event.TruncateTableEvent;
 import org.apache.flink.cdc.common.event.visitor.SchemaChangeEventVisitor;
 import org.apache.flink.cdc.common.exceptions.SchemaEvolveException;
-import org.apache.flink.cdc.common.exceptions.UnsupportedSchemaChangeEventException;
 import org.apache.flink.cdc.common.schema.Column;
 import org.apache.flink.cdc.common.sink.MetadataApplier;
 
@@ -42,8 +41,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 
@@ -108,7 +106,11 @@ public class ClickHouseMetadataApplier implements MetadataApplier {
 
     private void ensureConnection() throws SQLException {
         if (connection == null || connection.isClosed()) {
-            String jdbcUrl = url.startsWith("jdbc:") ? url : "jdbc:clickhouse://" + url.replace("http://", "").replace("https://", "");
+            String jdbcUrl =
+                    url.startsWith("jdbc:")
+                            ? url
+                            : "jdbc:clickhouse://"
+                                    + url.replace("http://", "").replace("https://", "");
             Properties properties = new Properties();
             properties.setProperty("user", username);
             properties.setProperty("password", password);
@@ -204,15 +206,14 @@ public class ClickHouseMetadataApplier implements MetadataApplier {
                                 + quoteIdentifier(column.getName())
                                 + " "
                                 + ClickHouseUtils.toClickHouseDataType(column)
-                                + (column.isNullable() ? "" : " NOT NULL");
+                                + (column.getType().isNullable() ? "" : " NOT NULL");
                 stmt.execute(alterSQL);
             }
             LOG.info("Successful to apply add column, event: {}", addColumnEvent);
             stmt.close();
         } catch (SQLException e) {
             LOG.error("Failed to apply add column, event: {}", addColumnEvent, e);
-            throw new SchemaEvolveException(
-                    addColumnEvent, "Failed to apply add column", e);
+            throw new SchemaEvolveException(addColumnEvent, "Failed to apply add column", e);
         }
     }
 
@@ -236,8 +237,7 @@ public class ClickHouseMetadataApplier implements MetadataApplier {
             stmt.close();
         } catch (SQLException e) {
             LOG.error("Failed to apply drop column, event: {}", dropColumnEvent, e);
-            throw new SchemaEvolveException(
-                    dropColumnEvent, "Failed to apply drop column", e);
+            throw new SchemaEvolveException(dropColumnEvent, "Failed to apply drop column", e);
         }
     }
 
@@ -249,22 +249,24 @@ public class ClickHouseMetadataApplier implements MetadataApplier {
             ensureConnection();
             Statement stmt = connection.createStatement();
 
-            String alterSQL =
-                    "ALTER TABLE "
-                            + quoteIdentifier(tableId.getSchemaName())
-                            + "."
-                            + quoteIdentifier(tableId.getTableName())
-                            + " RENAME COLUMN "
-                            + quoteIdentifier(renameColumnEvent.getOldColumnName())
-                            + " TO "
-                            + quoteIdentifier(renameColumnEvent.getNewColumnName());
-            stmt.execute(alterSQL);
+            // RenameColumnEvent contains a map of old name -> new name
+            for (Map.Entry<String, String> entry : renameColumnEvent.getNameMapping().entrySet()) {
+                String alterSQL =
+                        "ALTER TABLE "
+                                + quoteIdentifier(tableId.getSchemaName())
+                                + "."
+                                + quoteIdentifier(tableId.getTableName())
+                                + " RENAME COLUMN "
+                                + quoteIdentifier(entry.getKey())
+                                + " TO "
+                                + quoteIdentifier(entry.getValue());
+                stmt.execute(alterSQL);
+            }
             LOG.info("Successful to apply rename column, event: {}", renameColumnEvent);
             stmt.close();
         } catch (SQLException e) {
             LOG.error("Failed to apply rename column, event: {}", renameColumnEvent, e);
-            throw new SchemaEvolveException(
-                    renameColumnEvent, "Failed to apply rename column", e);
+            throw new SchemaEvolveException(renameColumnEvent, "Failed to apply rename column", e);
         }
     }
 
@@ -276,18 +278,24 @@ public class ClickHouseMetadataApplier implements MetadataApplier {
             ensureConnection();
             Statement stmt = connection.createStatement();
 
-            Column newColumn = alterColumnTypeEvent.getNewColumn();
-            String alterSQL =
-                    "ALTER TABLE "
-                            + quoteIdentifier(tableId.getSchemaName())
-                            + "."
-                            + quoteIdentifier(tableId.getTableName())
-                            + " MODIFY COLUMN "
-                            + quoteIdentifier(newColumn.getName())
-                            + " "
-                            + ClickHouseUtils.toClickHouseDataType(newColumn)
-                            + (newColumn.isNullable() ? "" : " NOT NULL");
-            stmt.execute(alterSQL);
+            // AlterColumnTypeEvent contains a map of column name -> new DataType
+            for (Map.Entry<String, org.apache.flink.cdc.common.types.DataType> entry :
+                    alterColumnTypeEvent.getTypeMapping().entrySet()) {
+                String columnName = entry.getKey();
+                org.apache.flink.cdc.common.types.DataType newType = entry.getValue();
+                String alterSQL =
+                        "ALTER TABLE "
+                                + quoteIdentifier(tableId.getSchemaName())
+                                + "."
+                                + quoteIdentifier(tableId.getTableName())
+                                + " MODIFY COLUMN "
+                                + quoteIdentifier(columnName)
+                                + " "
+                                + ClickHouseUtils.toClickHouseDataType(
+                                        Column.physicalColumn(columnName, newType))
+                                + (newType.isNullable() ? "" : " NOT NULL");
+                stmt.execute(alterSQL);
+            }
             LOG.info("Successful to apply alter column type, event: {}", alterColumnTypeEvent);
             stmt.close();
         } catch (SQLException e) {
@@ -342,4 +350,3 @@ public class ClickHouseMetadataApplier implements MetadataApplier {
         }
     }
 }
-

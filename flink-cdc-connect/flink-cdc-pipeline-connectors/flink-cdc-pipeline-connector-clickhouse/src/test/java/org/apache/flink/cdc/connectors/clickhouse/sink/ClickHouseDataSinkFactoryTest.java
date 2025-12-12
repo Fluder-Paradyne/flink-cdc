@@ -183,4 +183,3 @@ class ClickHouseDataSinkFactoryTest {
         Assertions.assertThat(dataSink).isInstanceOf(ClickHouseDataSink.class);
     }
 }
-

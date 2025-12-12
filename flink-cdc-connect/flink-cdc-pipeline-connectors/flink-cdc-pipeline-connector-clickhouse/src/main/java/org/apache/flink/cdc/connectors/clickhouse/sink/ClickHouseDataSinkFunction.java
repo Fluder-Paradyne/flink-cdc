@@ -88,7 +88,10 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
     @Override
     public void open(Configuration parameters) throws Exception {
         super.open(parameters);
-        String jdbcUrl = url.startsWith("jdbc:") ? url : "jdbc:clickhouse://" + url.replace("http://", "").replace("https://", "");
+        String jdbcUrl =
+                url.startsWith("jdbc:")
+                        ? url
+                        : "jdbc:clickhouse://" + url.replace("http://", "").replace("https://", "");
         Properties properties = new Properties();
         properties.setProperty("user", username);
         properties.setProperty("password", password);
@@ -127,8 +130,7 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
         tableInfo.fieldGetters = new RecordData.FieldGetter[newSchema.getColumnCount()];
         for (int i = 0; i < newSchema.getColumnCount(); i++) {
             tableInfo.fieldGetters[i] =
-                    createFieldGetter(
-                            newSchema.getColumns().get(i).getType(), i, zoneId);
+                    createFieldGetter(newSchema.getColumns().get(i).getType(), i, zoneId);
         }
         tableInfoMap.put(tableId, tableInfo);
 
@@ -149,9 +151,17 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
                             + "."
                             + quoteIdentifier(tableId.getTableName())
                             + " ("
-                            + String.join(", ", columnNames.stream().map(ClickHouseUtils::quoteIdentifier).toList())
+                            + String.join(
+                                    ", ",
+                                    columnNames.stream()
+                                            .map(ClickHouseUtils::quoteIdentifier)
+                                            .collect(java.util.stream.Collectors.toList()))
                             + ") VALUES ("
-                            + String.join(", ", columnNames.stream().map(c -> "?").toList())
+                            + String.join(
+                                    ", ",
+                                    columnNames.stream()
+                                            .map(c -> "?")
+                                            .collect(java.util.stream.Collectors.toList()))
                             + ")";
 
             PreparedStatement ps = connection.prepareStatement(insertSQL);
@@ -271,4 +281,3 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
         RecordData.FieldGetter[] fieldGetters;
     }
 }
-

@@ -19,8 +19,6 @@ package org.apache.flink.cdc.connectors.clickhouse.sink;
 
 import org.apache.flink.cdc.common.configuration.Configuration;
 
-import javax.annotation.Nullable;
-
 import java.io.Serializable;
 import java.util.Collections;
 import java.util.HashMap;
@@ -29,8 +27,8 @@ import java.util.stream.Collectors;
 
 /**
  * Configurations for creating a ClickHouse table. See <a
- * href="https://clickhouse.com/docs/en/sql-reference/statements/create/table">ClickHouse Documentation</a>
- * for how to create a ClickHouse table.
+ * href="https://clickhouse.com/docs/en/sql-reference/statements/create/table">ClickHouse
+ * Documentation</a> for how to create a ClickHouse table.
  */
 public class TableCreateConfig implements Serializable {
 
@@ -69,4 +67,3 @@ public class TableCreateConfig implements Serializable {
         return new TableCreateConfig(tableProperties);
     }
 }
-

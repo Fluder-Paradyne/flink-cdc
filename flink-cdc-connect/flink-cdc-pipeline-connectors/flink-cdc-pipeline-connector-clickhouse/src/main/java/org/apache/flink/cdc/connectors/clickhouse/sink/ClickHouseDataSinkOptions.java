@@ -33,7 +33,8 @@ public class ClickHouseDataSinkOptions {
             ConfigOptions.key("url")
                     .stringType()
                     .noDefaultValue()
-                    .withDescription("ClickHouse server URL, e.g., 'http://localhost:8123' or 'clickhouse://localhost:9000'.");
+                    .withDescription(
+                            "ClickHouse server URL, e.g., 'http://localhost:8123' or 'clickhouse://localhost:9000'.");
 
     public static final ConfigOption<String> USERNAME =
             ConfigOptions.key("username")
@@ -63,7 +64,8 @@ public class ClickHouseDataSinkOptions {
             ConfigOptions.key("sink.flush-interval-ms")
                     .longType()
                     .defaultValue(5000L)
-                    .withDescription("Flush interval in milliseconds for writing data to ClickHouse.");
+                    .withDescription(
+                            "Flush interval in milliseconds for writing data to ClickHouse.");
 
     public static final ConfigOption<Integer> SINK_MAX_RETRIES =
             ConfigOptions.key("sink.max-retries")
@@ -88,8 +90,8 @@ public class ClickHouseDataSinkOptions {
     // ------------------------------------------------------------------------------------------
 
     /**
-     * The prefix for properties used for creating a table. You can refer to ClickHouse documentation
-     * for the DDL.
+     * The prefix for properties used for creating a table. You can refer to ClickHouse
+     * documentation for the DDL.
      */
     public static final String TABLE_CREATE_PROPERTIES_PREFIX = "table.create.properties.";
 
@@ -102,4 +104,3 @@ public class ClickHouseDataSinkOptions {
                                     + "seconds. ClickHouse will cancel the schema change after timeout which will "
                                     + "cause the sink failure.");
 }
-

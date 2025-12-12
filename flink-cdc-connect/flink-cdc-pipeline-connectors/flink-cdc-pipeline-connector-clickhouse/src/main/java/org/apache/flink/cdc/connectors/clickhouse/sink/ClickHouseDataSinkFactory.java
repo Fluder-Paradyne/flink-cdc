@@ -93,4 +93,3 @@ public class ClickHouseDataSinkFactory implements DataSinkFactory {
         return optionalOptions;
     }
 }
-

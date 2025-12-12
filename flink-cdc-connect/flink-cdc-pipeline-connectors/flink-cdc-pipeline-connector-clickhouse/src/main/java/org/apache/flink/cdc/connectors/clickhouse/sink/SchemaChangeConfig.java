@@ -49,4 +49,3 @@ public class SchemaChangeConfig implements Serializable {
         return new SchemaChangeConfig(timeoutSecond);
     }
 }
-

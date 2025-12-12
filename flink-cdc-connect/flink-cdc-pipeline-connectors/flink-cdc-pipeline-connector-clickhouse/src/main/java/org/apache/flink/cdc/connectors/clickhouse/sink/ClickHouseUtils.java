@@ -175,7 +175,7 @@ public class ClickHouseUtils {
                     quoteIdentifier(column.getName())
                             + " "
                             + toClickHouseDataType(column)
-                            + (column.isNullable() ? "" : " NOT NULL");
+                            + (column.getType().isNullable() ? "" : " NOT NULL");
             if (column.getComment() != null && !column.getComment().isEmpty()) {
                 columnDef += " COMMENT '" + escapeString(column.getComment()) + "'";
             }
@@ -184,7 +184,8 @@ public class ClickHouseUtils {
 
         ddl.append(String.join(", ", columnDefinitions));
 
-        // Add primary key if exists (ClickHouse supports ORDER BY instead of PRIMARY KEY for MergeTree)
+        // Add primary key if exists (ClickHouse supports ORDER BY instead of PRIMARY KEY for
+        // MergeTree)
         if (!schema.primaryKeys().isEmpty()) {
             ddl.append(", ORDER BY (");
             List<String> pkColumns = new ArrayList<>();
@@ -241,8 +242,7 @@ public class ClickHouseUtils {
     public static final String DATETIME64 = "DateTime64";
 
     /** Transforms CDC {@link DataType} to ClickHouse data type. */
-    public static class CdcDataTypeTransformer
-            extends DataTypeDefaultVisitor<String> {
+    public static class CdcDataTypeTransformer extends DataTypeDefaultVisitor<String> {
 
         @Override
         public String visit(BooleanType booleanType) {
@@ -281,12 +281,7 @@ public class ClickHouseUtils {
 
         @Override
         public String visit(DecimalType decimalType) {
-            return DECIMAL
-                    + "("
-                    + decimalType.getPrecision()
-                    + ","
-                    + decimalType.getScale()
-                    + ")";
+            return DECIMAL + "(" + decimalType.getPrecision() + "," + decimalType.getScale() + ")";
         }
 
         @Override
@@ -335,4 +330,3 @@ public class ClickHouseUtils {
         }
     }
 }
-

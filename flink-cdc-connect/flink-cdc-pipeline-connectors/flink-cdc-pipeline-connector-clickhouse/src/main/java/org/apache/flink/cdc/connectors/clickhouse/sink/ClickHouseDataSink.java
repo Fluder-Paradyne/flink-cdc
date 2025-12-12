@@ -137,4 +137,3 @@ public class ClickHouseDataSink implements DataSink, Serializable {
         }
     }
 }
-
