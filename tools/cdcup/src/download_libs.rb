@@ -80,6 +80,21 @@ CDC_VERSIONS = {
         https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-values/3.2.1/flink-cdc-pipeline-connector-values-3.2.1.jar
       ]
     },
+  '3.5.0': {
+    tar: 'https://dlcdn.apache.org/flink/flink-cdc-3.5.0/flink-cdc-3.5.0-bin.tar.gz',
+    connectors: %w[
+      https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-mysql/3.5.0/flink-cdc-pipeline-connector-mysql-3.5.0.jar
+      https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-doris/3.5.0/flink-cdc-pipeline-connector-doris-3.5.0.jar
+      https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-starrocks/3.5.0/flink-cdc-pipeline-connector-starrocks-3.5.0.jar
+      https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-kafka/3.5.0/flink-cdc-pipeline-connector-kafka-3.5.0.jar
+      https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-paimon/3.5.0/flink-cdc-pipeline-connector-paimon-3.5.0.jar
+      https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-elasticsearch/3.5.0/flink-cdc-pipeline-connector-elasticsearch-3.5.0.jar
+      https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-oceanbase/3.5.0/flink-cdc-pipeline-connector-oceanbase-3.5.0.jar
+      https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-maxcompute/3.5.0/flink-cdc-pipeline-connector-maxcompute-3.5.0.jar
+      https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-iceberg/3.5.0/flink-cdc-pipeline-connector-iceberg-3.5.0.jar
+      https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-values/3.5.0/flink-cdc-pipeline-connector-values-3.5.0.jar
+    ]
+  },
 }.freeze
 
 def download_cdc_bin(version, dest_path)
@@ -111,9 +126,16 @@ def download_hadoop_common(dest_path)
   -O #{dest_path}/lib/hadoop-uber.jar`
 end
 
+def download_clickhouse_driver(dest_path)
+  puts "\tDownloading ClickHouse JDBC Driver..."
+  `wget -q https://repo1.maven.org/maven2/com/clickhouse/clickhouse-jdbc/0.6.0/clickhouse-jdbc-0.6.0.jar \
+  -O #{dest_path}/lib/clickhouse-jdbc.jar`
+end
+
 def download_cdc(version, dest_path, connectors = [])
   download_cdc_bin(version.to_sym, dest_path)
   download_connectors(version.to_sym, dest_path, connectors)
   download_mysql_driver(dest_path) if connectors.include? MySQL.connector_name
   download_hadoop_common(dest_path) if connectors.include? Paimon.connector_name
+  download_clickhouse_driver(dest_path) if connectors.include? 'flink-cdc-pipeline-connector-clickhouse'
 end

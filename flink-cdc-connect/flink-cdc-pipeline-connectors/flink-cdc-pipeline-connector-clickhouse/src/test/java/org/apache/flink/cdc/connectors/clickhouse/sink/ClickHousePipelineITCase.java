@@ -113,19 +113,34 @@ class ClickHousePipelineITCase extends ClickHouseSinkTestBase {
                         new CreateTableEvent(tableId, schema),
                         DataChangeEvent.insertEvent(
                                 tableId,
-                                generator.generate(new Object[] {1, BinaryStringData.fromString("test1"), 10.5})),
+                                generator.generate(
+                                        new Object[] {
+                                            1, BinaryStringData.fromString("test1"), 10.5
+                                        })),
                         DataChangeEvent.insertEvent(
                                 tableId,
-                                generator.generate(new Object[] {2, BinaryStringData.fromString("test2"), 20.5})),
+                                generator.generate(
+                                        new Object[] {
+                                            2, BinaryStringData.fromString("test2"), 20.5
+                                        })),
                         // UPDATE: change value for id=1
                         DataChangeEvent.updateEvent(
                                 tableId,
-                                generator.generate(new Object[] {1, BinaryStringData.fromString("test1"), 10.5}),
-                                generator.generate(new Object[] {1, BinaryStringData.fromString("test1_updated"), 15.5})),
+                                generator.generate(
+                                        new Object[] {
+                                            1, BinaryStringData.fromString("test1"), 10.5
+                                        }),
+                                generator.generate(
+                                        new Object[] {
+                                            1, BinaryStringData.fromString("test1_updated"), 15.5
+                                        })),
                         // DELETE: remove id=2
                         DataChangeEvent.deleteEvent(
                                 tableId,
-                                generator.generate(new Object[] {2, BinaryStringData.fromString("test2"), 20.5})));
+                                generator.generate(
+                                        new Object[] {
+                                            2, BinaryStringData.fromString("test2"), 20.5
+                                        })));
 
         // Create sink configuration
         Configuration sinkConfig =
@@ -135,17 +150,19 @@ class ClickHousePipelineITCase extends ClickHouseSinkTestBase {
                                 put(URL.key(), CLICKHOUSE_CONTAINER.getHttpUrl());
                                 put(USERNAME.key(), CLICKHOUSE_CONTAINER.getUsername());
                                 put(PASSWORD.key(), CLICKHOUSE_CONTAINER.getPassword());
-                                put(DATABASE_NAME.key(), ClickHouseContainer.CLICKHOUSE_DATABASE_NAME);
+                                put(
+                                        DATABASE_NAME.key(),
+                                        ClickHouseContainer.CLICKHOUSE_DATABASE_NAME);
                             }
                         });
 
         // Create sink
         DataSink sink = createClickHouseDataSink(sinkConfig);
-        FlinkSinkFunctionProvider sinkProvider = (FlinkSinkFunctionProvider) sink.getEventSinkProvider();
+        FlinkSinkFunctionProvider sinkProvider =
+                (FlinkSinkFunctionProvider) sink.getEventSinkProvider();
 
         // Create data stream and sink
-        DataStream<Event> eventStream =
-                env.fromCollection(events, TypeInformation.of(Event.class));
+        DataStream<Event> eventStream = env.fromCollection(events, TypeInformation.of(Event.class));
 
         eventStream.addSink(sinkProvider.getSinkFunction());
 
@@ -212,17 +229,19 @@ class ClickHousePipelineITCase extends ClickHouseSinkTestBase {
                                 put(URL.key(), CLICKHOUSE_CONTAINER.getHttpUrl());
                                 put(USERNAME.key(), CLICKHOUSE_CONTAINER.getUsername());
                                 put(PASSWORD.key(), CLICKHOUSE_CONTAINER.getPassword());
-                                put(DATABASE_NAME.key(), ClickHouseContainer.CLICKHOUSE_DATABASE_NAME);
+                                put(
+                                        DATABASE_NAME.key(),
+                                        ClickHouseContainer.CLICKHOUSE_DATABASE_NAME);
                             }
                         });
 
         // Create sink
         DataSink sink = createClickHouseDataSink(sinkConfig);
-        FlinkSinkFunctionProvider sinkProvider = (FlinkSinkFunctionProvider) sink.getEventSinkProvider();
+        FlinkSinkFunctionProvider sinkProvider =
+                (FlinkSinkFunctionProvider) sink.getEventSinkProvider();
 
         // Create data stream and sink
-        DataStream<Event> eventStream =
-                env.fromCollection(events, TypeInformation.of(Event.class));
+        DataStream<Event> eventStream = env.fromCollection(events, TypeInformation.of(Event.class));
 
         eventStream.addSink(sinkProvider.getSinkFunction());
 
@@ -238,4 +257,3 @@ class ClickHousePipelineITCase extends ClickHouseSinkTestBase {
         Assertions.assertThat(schema).isNotEmpty();
     }
 }
-
