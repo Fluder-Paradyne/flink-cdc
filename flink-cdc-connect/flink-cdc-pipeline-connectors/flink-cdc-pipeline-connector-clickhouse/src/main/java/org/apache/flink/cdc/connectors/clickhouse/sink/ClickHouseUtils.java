@@ -183,11 +183,19 @@ public class ClickHouseUtils {
         }
 
         ddl.append(String.join(", ", columnDefinitions));
+        ddl.append(")");
 
-        // Add primary key if exists (ClickHouse supports ORDER BY instead of PRIMARY KEY for
-        // MergeTree)
+        // Use ReplacingMergeTree for tables with primary keys to support UPDATE operations
+        // ReplacingMergeTree automatically replaces rows with the same primary key
         if (!schema.primaryKeys().isEmpty()) {
-            ddl.append(", ORDER BY (");
+            ddl.append(" ENGINE = ReplacingMergeTree()");
+        } else {
+            ddl.append(" ENGINE = MergeTree()");
+        }
+
+        // Add ORDER BY clause (required for MergeTree engines, comes AFTER ENGINE)
+        if (!schema.primaryKeys().isEmpty()) {
+            ddl.append(" ORDER BY (");
             List<String> pkColumns = new ArrayList<>();
             for (String pk : schema.primaryKeys()) {
                 pkColumns.add(quoteIdentifier(pk));
@@ -197,18 +205,10 @@ public class ClickHouseUtils {
         } else {
             // If no primary key, use first column as ORDER BY
             if (!schema.getColumns().isEmpty()) {
-                ddl.append(", ORDER BY (");
+                ddl.append(" ORDER BY (");
                 ddl.append(quoteIdentifier(schema.getColumns().get(0).getName()));
                 ddl.append(")");
             }
-        }
-
-        // Use ReplacingMergeTree for tables with primary keys to support UPDATE operations
-        // ReplacingMergeTree automatically replaces rows with the same primary key
-        if (!schema.primaryKeys().isEmpty()) {
-            ddl.append(") ENGINE = ReplacingMergeTree()");
-        } else {
-            ddl.append(") ENGINE = MergeTree()");
         }
 
         // Add table properties if any

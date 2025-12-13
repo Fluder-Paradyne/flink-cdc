@@ -116,6 +116,11 @@ public class ClickHouseMetadataApplier implements MetadataApplier {
             Properties properties = new Properties();
             properties.setProperty("user", username);
             properties.setProperty("password", password);
+            // Set connection timeouts to prevent blocking coordinator requests
+            // Use shorter timeout for schema changes (5 seconds) to avoid coordinator timeout
+            properties.setProperty("connect_timeout", "5000"); // 5 seconds
+            properties.setProperty("socket_timeout", "10000"); // 10 seconds
+            properties.setProperty("connection_timeout", "5000"); // 5 seconds
             connection = DriverManager.getConnection(jdbcUrl, properties);
         }
     }
