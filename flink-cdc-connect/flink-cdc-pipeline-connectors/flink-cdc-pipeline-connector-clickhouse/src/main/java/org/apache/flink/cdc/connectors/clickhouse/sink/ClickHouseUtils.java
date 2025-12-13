@@ -203,7 +203,13 @@ public class ClickHouseUtils {
             }
         }
 
-        ddl.append(") ENGINE = MergeTree()");
+        // Use ReplacingMergeTree for tables with primary keys to support UPDATE operations
+        // ReplacingMergeTree automatically replaces rows with the same primary key
+        if (!schema.primaryKeys().isEmpty()) {
+            ddl.append(") ENGINE = ReplacingMergeTree()");
+        } else {
+            ddl.append(") ENGINE = MergeTree()");
+        }
 
         // Add table properties if any
         if (!tableCreateConfig.getProperties().isEmpty()) {
@@ -211,6 +217,68 @@ public class ClickHouseUtils {
         }
 
         return ddl.toString();
+    }
+
+    /**
+     * Build WHERE clause for DELETE/UPDATE operations based on primary keys.
+     *
+     * @param schema the table schema
+     * @param record the record data
+     * @param zoneId the time zone for timestamp conversion
+     * @return WHERE clause string
+     */
+    public static String buildPrimaryKeyWhereClause(
+            Schema schema, RecordData record, ZoneId zoneId) {
+        if (schema.primaryKeys().isEmpty()) {
+            throw new UnsupportedOperationException(
+                    "DELETE/UPDATE operations require primary keys, but table has no primary keys");
+        }
+
+        List<String> conditions = new ArrayList<>();
+        RecordData.FieldGetter[] fieldGetters = new RecordData.FieldGetter[schema.getColumnCount()];
+        for (int i = 0; i < schema.getColumnCount(); i++) {
+            fieldGetters[i] = createFieldGetter(schema.getColumns().get(i).getType(), i, zoneId);
+        }
+
+        for (String pk : schema.primaryKeys()) {
+            int pkIndex = -1;
+            for (int i = 0; i < schema.getColumnCount(); i++) {
+                if (schema.getColumns().get(i).getName().equals(pk)) {
+                    pkIndex = i;
+                    break;
+                }
+            }
+            if (pkIndex == -1) {
+                throw new RuntimeException("Primary key column " + pk + " not found in schema");
+            }
+
+            Object value = fieldGetters[pkIndex].getFieldOrNull(record);
+            if (value == null) {
+                conditions.add(quoteIdentifier(pk) + " IS NULL");
+            } else {
+                conditions.add(quoteIdentifier(pk) + " = " + formatValueForSQL(value));
+            }
+        }
+
+        return String.join(" AND ", conditions);
+    }
+
+    /**
+     * Format a value for use in SQL WHERE clause.
+     *
+     * @param value the value to format
+     * @return formatted SQL value string
+     */
+    private static String formatValueForSQL(Object value) {
+        if (value == null) {
+            return "NULL";
+        } else if (value instanceof String) {
+            return "'" + escapeString((String) value) + "'";
+        } else if (value instanceof Number || value instanceof Boolean) {
+            return value.toString();
+        } else {
+            return "'" + escapeString(value.toString()) + "'";
+        }
     }
 
     /** Quote identifier for ClickHouse. */

@@ -100,6 +100,8 @@ public class ClickHouseMetadataApplier implements MetadataApplier {
                 SchemaChangeEventType.CREATE_TABLE,
                 SchemaChangeEventType.ADD_COLUMN,
                 SchemaChangeEventType.DROP_COLUMN,
+                SchemaChangeEventType.RENAME_COLUMN,
+                SchemaChangeEventType.ALTER_COLUMN_TYPE,
                 SchemaChangeEventType.DROP_TABLE,
                 SchemaChangeEventType.TRUNCATE_TABLE);
     }

@@ -64,8 +64,9 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
 
     private transient Connection connection;
     private transient Map<TableId, TableInfo> tableInfoMap;
-    private transient Map<TableId, List<Object[]>> batchBuffer;
-    private transient Map<TableId, PreparedStatement> preparedStatements;
+    private transient Map<TableId, List<OperationData>> batchBuffer;
+    private transient Map<TableId, PreparedStatement> insertStatements;
+    private transient Map<TableId, PreparedStatement> deleteStatements;
     private transient long lastFlushTime;
 
     public ClickHouseDataSinkFunction(
@@ -98,7 +99,8 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
         connection = DriverManager.getConnection(jdbcUrl, properties);
         tableInfoMap = new HashMap<>();
         batchBuffer = new HashMap<>();
-        preparedStatements = new HashMap<>();
+        insertStatements = new HashMap<>();
+        deleteStatements = new HashMap<>();
         lastFlushTime = System.currentTimeMillis();
     }
 
@@ -134,17 +136,18 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
         }
         tableInfoMap.put(tableId, tableInfo);
 
-        // Prepare INSERT statement for the table
-        prepareInsertStatement(tableId, newSchema);
+        // Prepare INSERT and DELETE statements for the table
+        prepareStatements(tableId, newSchema);
     }
 
-    private void prepareInsertStatement(TableId tableId, Schema schema) {
+    private void prepareStatements(TableId tableId, Schema schema) {
         try {
             List<String> columnNames = new ArrayList<>();
             for (Column column : schema.getColumns()) {
                 columnNames.add(column.getName());
             }
 
+            // Prepare INSERT statement
             String insertSQL =
                     "INSERT INTO "
                             + quoteIdentifier(tableId.getSchemaName())
@@ -164,10 +167,16 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
                                             .collect(java.util.stream.Collectors.toList()))
                             + ")";
 
-            PreparedStatement ps = connection.prepareStatement(insertSQL);
-            preparedStatements.put(tableId, ps);
+            PreparedStatement insertPs = connection.prepareStatement(insertSQL);
+            insertStatements.put(tableId, insertPs);
+
+            // Prepare DELETE statement if table has primary keys
+            if (!schema.primaryKeys().isEmpty()) {
+                // DELETE statement will be built dynamically based on primary keys
+                // We'll use ALTER TABLE DELETE WHERE for better performance
+            }
         } catch (SQLException e) {
-            throw new RuntimeException("Failed to prepare insert statement for " + tableId, e);
+            throw new RuntimeException("Failed to prepare statements for " + tableId, e);
         }
     }
 
@@ -176,25 +185,28 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
         TableInfo tableInfo = tableInfoMap.get(tableId);
         Preconditions.checkNotNull(tableInfo, tableId + " is not existed");
 
-        Object[] rowData;
+        OperationData operationData;
         switch (event.op()) {
             case INSERT:
             case UPDATE:
             case REPLACE:
-                rowData = extractRowData(tableInfo, event.after());
+                // For UPDATE: With ReplacingMergeTree, we insert the new row
+                // ClickHouse will automatically replace the old row with the same primary key
+                Object[] rowData = extractRowData(tableInfo, event.after());
+                operationData = new OperationData(OperationType.INSERT, rowData, null);
                 break;
             case DELETE:
-                // For DELETE, we need to handle it based on ClickHouse capabilities
-                // For now, we'll skip DELETE events or implement a DELETE mechanism
-                LOG.warn("DELETE operation is not fully supported, skipping event: {}", event);
-                return;
+                // For DELETE: Use ALTER TABLE DELETE WHERE with primary key conditions
+                RecordData beforeRecord = event.before();
+                operationData = new OperationData(OperationType.DELETE, null, beforeRecord);
+                break;
             default:
                 throw new UnsupportedOperationException(
                         "Don't support operation type " + event.op());
         }
 
         // Add to batch buffer
-        batchBuffer.computeIfAbsent(tableId, k -> new ArrayList<>()).add(rowData);
+        batchBuffer.computeIfAbsent(tableId, k -> new ArrayList<>()).add(operationData);
 
         // Flush if batch size reached or flush interval elapsed
         if (shouldFlush(tableId)) {
@@ -211,7 +223,7 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
     }
 
     private boolean shouldFlush(TableId tableId) {
-        List<Object[]> buffer = batchBuffer.get(tableId);
+        List<OperationData> buffer = batchBuffer.get(tableId);
         if (buffer == null || buffer.isEmpty()) {
             return false;
         }
@@ -220,28 +232,61 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
     }
 
     private void flush(TableId tableId) throws SQLException {
-        List<Object[]> buffer = batchBuffer.get(tableId);
+        List<OperationData> buffer = batchBuffer.get(tableId);
         if (buffer == null || buffer.isEmpty()) {
             return;
         }
 
-        PreparedStatement ps = preparedStatements.get(tableId);
-        if (ps == null) {
-            LOG.warn("No prepared statement for table {}, skipping flush", tableId);
+        TableInfo tableInfo = tableInfoMap.get(tableId);
+        if (tableInfo == null) {
+            LOG.warn("No table info for table {}, skipping flush", tableId);
+            return;
+        }
+
+        PreparedStatement insertPs = insertStatements.get(tableId);
+        if (insertPs == null) {
+            LOG.warn("No insert statement for table {}, skipping flush", tableId);
             return;
         }
 
         try {
             connection.setAutoCommit(false);
-            for (Object[] rowData : buffer) {
-                for (int i = 0; i < rowData.length; i++) {
-                    ps.setObject(i + 1, rowData[i]);
+
+            // Separate INSERT and DELETE operations
+            List<Object[]> insertBatch = new ArrayList<>();
+            List<RecordData> deleteBatch = new ArrayList<>();
+
+            for (OperationData opData : buffer) {
+                if (opData.operationType == OperationType.INSERT) {
+                    insertBatch.add(opData.rowData);
+                } else if (opData.operationType == OperationType.DELETE) {
+                    deleteBatch.add(opData.beforeRecord);
                 }
-                ps.addBatch();
             }
-            ps.executeBatch();
+
+            // Execute INSERT operations
+            if (!insertBatch.isEmpty()) {
+                for (Object[] rowData : insertBatch) {
+                    for (int i = 0; i < rowData.length; i++) {
+                        insertPs.setObject(i + 1, rowData[i]);
+                    }
+                    insertPs.addBatch();
+                }
+                insertPs.executeBatch();
+            }
+
+            // Execute DELETE operations using ALTER TABLE DELETE WHERE
+            if (!deleteBatch.isEmpty()) {
+                executeDeletes(tableId, tableInfo, deleteBatch);
+            }
+
             connection.commit();
-            LOG.debug("Flushed {} rows to table {}", buffer.size(), tableId);
+            LOG.debug(
+                    "Flushed {} operations ({} inserts, {} deletes) to table {}",
+                    buffer.size(),
+                    insertBatch.size(),
+                    deleteBatch.size(),
+                    tableId);
         } catch (SQLException e) {
             connection.rollback();
             throw e;
@@ -249,6 +294,33 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
             connection.setAutoCommit(true);
             buffer.clear();
             lastFlushTime = System.currentTimeMillis();
+        }
+    }
+
+    private void executeDeletes(
+            TableId tableId, TableInfo tableInfo, List<RecordData> deleteRecords)
+            throws SQLException {
+        if (tableInfo.schema.primaryKeys().isEmpty()) {
+            throw new UnsupportedOperationException(
+                    "DELETE operations require primary keys, but table "
+                            + tableId
+                            + " has no primary keys");
+        }
+
+        try (java.sql.Statement stmt = connection.createStatement()) {
+            for (RecordData record : deleteRecords) {
+                String whereClause =
+                        ClickHouseUtils.buildPrimaryKeyWhereClause(
+                                tableInfo.schema, record, zoneId);
+                String deleteSQL =
+                        "ALTER TABLE "
+                                + quoteIdentifier(tableId.getSchemaName())
+                                + "."
+                                + quoteIdentifier(tableId.getTableName())
+                                + " DELETE WHERE "
+                                + whereClause;
+                stmt.execute(deleteSQL);
+            }
         }
     }
 
@@ -262,7 +334,12 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
         }
 
         // Close prepared statements
-        for (PreparedStatement ps : preparedStatements.values()) {
+        for (PreparedStatement ps : insertStatements.values()) {
+            if (ps != null) {
+                ps.close();
+            }
+        }
+        for (PreparedStatement ps : deleteStatements.values()) {
             if (ps != null) {
                 ps.close();
             }
@@ -279,5 +356,24 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
     private static class TableInfo {
         Schema schema;
         RecordData.FieldGetter[] fieldGetters;
+    }
+
+    /** Operation type for batch processing. */
+    private enum OperationType {
+        INSERT,
+        DELETE
+    }
+
+    /** Operation data holder. */
+    private static class OperationData {
+        final OperationType operationType;
+        final Object[] rowData; // For INSERT operations
+        final RecordData beforeRecord; // For DELETE operations
+
+        OperationData(OperationType operationType, Object[] rowData, RecordData beforeRecord) {
+            this.operationType = operationType;
+            this.rowData = rowData;
+            this.beforeRecord = beforeRecord;
+        }
     }
 }
