@@ -108,19 +108,30 @@ public class ClickHouseMetadataApplier implements MetadataApplier {
 
     private void ensureConnection() throws SQLException {
         if (connection == null || connection.isClosed()) {
-            String jdbcUrl =
-                    url.startsWith("jdbc:")
-                            ? url
-                            : "jdbc:clickhouse://"
-                                    + url.replace("http://", "").replace("https://", "");
+            // Explicitly load ClickHouse driver (service file excluded from JAR to avoid conflicts)
+            try {
+                Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
+            } catch (ClassNotFoundException e) {
+                throw new SQLException("Failed to load ClickHouse JDBC driver", e);
+            }
+            // Build JDBC URL with HTTP protocol
+            String jdbcUrl;
+            if (url.startsWith("jdbc:")) {
+                jdbcUrl = url;
+            } else {
+                // Convert http://host:port to jdbc:clickhouse:http://host:port
+                String cleanUrl = url.replace("http://", "").replace("https://", "");
+                jdbcUrl = "jdbc:clickhouse:http://" + cleanUrl + "/" + databaseName;
+            }
             Properties properties = new Properties();
             properties.setProperty("user", username);
             properties.setProperty("password", password);
             // Set connection timeouts to prevent blocking coordinator requests
-            // Use shorter timeout for schema changes (5 seconds) to avoid coordinator timeout
             properties.setProperty("connect_timeout", "5000"); // 5 seconds
             properties.setProperty("socket_timeout", "10000"); // 10 seconds
-            properties.setProperty("connection_timeout", "5000"); // 5 seconds
+            // Disable compression to avoid protocol mismatch issues
+            properties.setProperty("compress", "false");
+            properties.setProperty("decompress", "false");
             connection = DriverManager.getConnection(jdbcUrl, properties);
         }
     }

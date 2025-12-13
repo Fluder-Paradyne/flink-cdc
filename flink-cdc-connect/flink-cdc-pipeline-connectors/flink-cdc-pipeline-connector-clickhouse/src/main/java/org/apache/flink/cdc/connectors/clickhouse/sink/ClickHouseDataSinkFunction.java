@@ -89,13 +89,27 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
     @Override
     public void open(Configuration parameters) throws Exception {
         super.open(parameters);
-        String jdbcUrl =
-                url.startsWith("jdbc:")
-                        ? url
-                        : "jdbc:clickhouse://" + url.replace("http://", "").replace("https://", "");
+        // Explicitly load ClickHouse driver (service file excluded from JAR to avoid conflicts)
+        try {
+            Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException("Failed to load ClickHouse JDBC driver", e);
+        }
+        // Build JDBC URL with HTTP protocol and disable compression
+        String jdbcUrl;
+        if (url.startsWith("jdbc:")) {
+            jdbcUrl = url;
+        } else {
+            // Convert http://host:port to jdbc:clickhouse:http://host:port
+            String cleanUrl = url.replace("http://", "").replace("https://", "");
+            jdbcUrl = "jdbc:clickhouse:http://" + cleanUrl + "/" + databaseName;
+        }
         Properties properties = new Properties();
         properties.setProperty("user", username);
         properties.setProperty("password", password);
+        // Disable compression to avoid protocol mismatch issues
+        properties.setProperty("compress", "false");
+        properties.setProperty("decompress", "false");
         connection = DriverManager.getConnection(jdbcUrl, properties);
         tableInfoMap = new HashMap<>();
         batchBuffer = new HashMap<>();

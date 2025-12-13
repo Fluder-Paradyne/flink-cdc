@@ -126,17 +126,9 @@ def download_hadoop_common(dest_path)
   -O #{dest_path}/lib/hadoop-uber.jar`
 end
 
-def download_clickhouse_driver(dest_path)
-  puts "\tDownloading ClickHouse JDBC Driver (all-in-one)..."
-  # Use the "all" classifier which bundles all dependencies including HttpClient5
-  `wget -q https://repo1.maven.org/maven2/com/clickhouse/clickhouse-jdbc/0.6.5/clickhouse-jdbc-0.6.5-all.jar \
-  -O #{dest_path}/lib/clickhouse-jdbc.jar`
-end
-
 def download_cdc(version, dest_path, connectors = [])
   download_cdc_bin(version.to_sym, dest_path)
   download_connectors(version.to_sym, dest_path, connectors)
   download_mysql_driver(dest_path) if connectors.include? MySQL.connector_name
   download_hadoop_common(dest_path) if connectors.include? Paimon.connector_name
-  download_clickhouse_driver(dest_path) if connectors.include? 'flink-cdc-pipeline-connector-clickhouse'
 end
