@@ -24,6 +24,7 @@ require_relative 'download_libs'
 require_relative 'source/my_sql'
 require_relative 'source/values_source'
 
+require_relative 'sink/clickhouse'
 require_relative 'sink/doris'
 require_relative 'sink/kafka'
 require_relative 'sink/paimon'
@@ -53,6 +54,7 @@ SOURCES = {
 }.freeze
 
 SINKS = {
+  clickhouse: ClickHouse,
   kafka: Kafka,
   paimon: Paimon,
   doris: Doris,
@@ -74,6 +76,7 @@ FLINK_CDC_VERSIONS = %w[
   3.1.1
   3.2.0
   3.2.1
+  3.5.0
 ].freeze
 
 puts

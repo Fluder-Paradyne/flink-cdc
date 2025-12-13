@@ -1,0 +1,66 @@
+# frozen_string_literal: true
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# ClickHouse sink definition generator class.
+class ClickHouse
+  class << self
+    def connector_name
+      'flink-cdc-pipeline-connector-clickhouse'
+    end
+
+    def prepend_to_docker_compose_yaml(docker_compose_yaml)
+      docker_compose_yaml['services']['clickhouse'] = {
+        'image' => 'clickhouse/clickhouse-server:latest',
+        'hostname' => 'clickhouse',
+        'ports' => %w[8123 9000],
+        'volumes' => ["#{CDC_DATA_VOLUME}:/var/lib/clickhouse"],
+        'environment' => {
+          'CLICKHOUSE_DB' => 'default',
+          'CLICKHOUSE_USER' => 'default',
+          'CLICKHOUSE_PASSWORD' => '',
+          'CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT' => 1
+        },
+        'ulimits' => {
+          'nofile' => {
+            'soft' => 262_144,
+            'hard' => 262_144
+          }
+        },
+        'healthcheck' => {
+          'test' => ['CMD', 'wget', '--spider', '-q', 'http://localhost:8123/ping'],
+          'interval' => '10s',
+          'timeout' => '5s',
+          'retries' => 5,
+          'start_period' => '30s'
+        }
+      }
+    end
+
+    def prepend_to_pipeline_yaml(pipeline_yaml)
+      pipeline_yaml['sink'] = {
+        'type' => 'clickhouse',
+        'url' => 'http://clickhouse:8123',
+        'username' => 'default',
+        'password' => '',
+        'database-name' => 'default',
+        'sink.batch-size' => 1000,
+        'sink.flush-interval-ms' => 5000
+      }
+    end
+  end
+end
+
