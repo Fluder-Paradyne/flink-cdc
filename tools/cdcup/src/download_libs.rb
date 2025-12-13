@@ -127,8 +127,9 @@ def download_hadoop_common(dest_path)
 end
 
 def download_clickhouse_driver(dest_path)
-  puts "\tDownloading ClickHouse JDBC Driver..."
-  `wget -q https://repo1.maven.org/maven2/com/clickhouse/clickhouse-jdbc/0.6.0/clickhouse-jdbc-0.6.0.jar \
+  puts "\tDownloading ClickHouse JDBC Driver (all-in-one)..."
+  # Use the "all" classifier which bundles all dependencies including HttpClient5
+  `wget -q https://repo1.maven.org/maven2/com/clickhouse/clickhouse-jdbc/0.6.5/clickhouse-jdbc-0.6.5-all.jar \
   -O #{dest_path}/lib/clickhouse-jdbc.jar`
 end
 
