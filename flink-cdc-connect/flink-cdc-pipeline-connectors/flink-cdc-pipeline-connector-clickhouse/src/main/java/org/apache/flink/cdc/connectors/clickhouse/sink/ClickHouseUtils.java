@@ -18,7 +18,6 @@
 package org.apache.flink.cdc.connectors.clickhouse.sink;
 
 import org.apache.flink.cdc.common.data.RecordData;
-import org.apache.flink.cdc.common.event.TableId;
 import org.apache.flink.cdc.common.schema.Column;
 import org.apache.flink.cdc.common.schema.Schema;
 import org.apache.flink.cdc.common.types.BigIntType;
@@ -45,6 +44,12 @@ import java.util.List;
 
 import static org.apache.flink.cdc.common.types.DataTypeChecks.getPrecision;
 import static org.apache.flink.cdc.common.types.DataTypeChecks.getScale;
+import static org.apache.flink.cdc.connectors.clickhouse.sink.ClickHouseConstants.ENGINE_MERGE_TREE;
+import static org.apache.flink.cdc.connectors.clickhouse.sink.ClickHouseConstants.ENGINE_REPLACING_MERGE_TREE_NEW;
+import static org.apache.flink.cdc.connectors.clickhouse.sink.ClickHouseConstants.IS_DELETED_COLUMN;
+import static org.apache.flink.cdc.connectors.clickhouse.sink.ClickHouseConstants.IS_DELETED_COLUMN_DATA_TYPE;
+import static org.apache.flink.cdc.connectors.clickhouse.sink.ClickHouseConstants.VERSION_COLUMN;
+import static org.apache.flink.cdc.connectors.clickhouse.sink.ClickHouseConstants.VERSION_COLUMN_DATA_TYPE;
 
 /** Utilities for conversion from source table to ClickHouse table. */
 public class ClickHouseUtils {
@@ -153,15 +158,31 @@ public class ClickHouseUtils {
     }
 
     /**
-     * Generate CREATE TABLE DDL for ClickHouse.
+     * Generate CREATE TABLE DDL for ClickHouse with CDC system columns.
      *
-     * @param tableId the table identifier
+     * <p>For tables with primary keys, creates a ReplacingMergeTree with:
+     *
+     * <ul>
+     *   <li>{@code _version} - UInt64 for version-based deduplication
+     *   <li>{@code _is_deleted} - UInt8 flag for soft deletes (0=active, 1=deleted)
+     * </ul>
+     *
+     * <p>This approach allows:
+     *
+     * <ul>
+     *   <li>INSERT: Insert with _version, _is_deleted=0
+     *   <li>UPDATE: Insert new row with higher _version, _is_deleted=0
+     *   <li>DELETE: Insert row with higher _version, _is_deleted=1
+     * </ul>
+     *
      * @param schema the table schema
      * @param tableCreateConfig table creation configuration
      * @return CREATE TABLE DDL statement
      */
     public static String generateCreateTableDDL(
-            TableId tableId, Schema schema, TableCreateConfig tableCreateConfig) {
+            org.apache.flink.cdc.common.event.TableId tableId,
+            Schema schema,
+            TableCreateConfig tableCreateConfig) {
         StringBuilder ddl = new StringBuilder();
         ddl.append("CREATE TABLE IF NOT EXISTS ");
         ddl.append(quoteIdentifier(tableId.getSchemaName()));
@@ -170,6 +191,8 @@ public class ClickHouseUtils {
         ddl.append(" (");
 
         List<String> columnDefinitions = new ArrayList<>();
+
+        // Add user-defined columns
         for (Column column : schema.getColumns()) {
             String columnDef =
                     quoteIdentifier(column.getName())
@@ -182,15 +205,34 @@ public class ClickHouseUtils {
             columnDefinitions.add(columnDef);
         }
 
+        // Add CDC system columns for tables with primary keys
+        if (!schema.primaryKeys().isEmpty()) {
+            // _version column for ReplacingMergeTree ordering
+            columnDefinitions.add(
+                    quoteIdentifier(VERSION_COLUMN)
+                            + " "
+                            + VERSION_COLUMN_DATA_TYPE
+                            + " COMMENT 'CDC version for deduplication'");
+
+            // _is_deleted column for soft deletes
+            columnDefinitions.add(
+                    quoteIdentifier(IS_DELETED_COLUMN)
+                            + " "
+                            + IS_DELETED_COLUMN_DATA_TYPE
+                            + " DEFAULT 0"
+                            + " COMMENT 'CDC delete flag (0=active, 1=deleted)'");
+        }
+
         ddl.append(String.join(", ", columnDefinitions));
         ddl.append(")");
 
-        // Use ReplacingMergeTree for tables with primary keys to support UPDATE operations
-        // ReplacingMergeTree automatically replaces rows with the same primary key
+        // Choose engine based on primary keys
         if (!schema.primaryKeys().isEmpty()) {
-            ddl.append(" ENGINE = ReplacingMergeTree()");
+            // ReplacingMergeTree with version and is_deleted for CDC
+            ddl.append(" ENGINE = ").append(ENGINE_REPLACING_MERGE_TREE_NEW);
         } else {
-            ddl.append(" ENGINE = MergeTree()");
+            // Simple MergeTree for tables without primary keys
+            ddl.append(" ENGINE = ").append(ENGINE_MERGE_TREE);
         }
 
         // Add ORDER BY clause (required for MergeTree engines, comes AFTER ENGINE)
@@ -217,6 +259,25 @@ public class ClickHouseUtils {
         }
 
         return ddl.toString();
+    }
+
+    /**
+     * Get the list of column names including CDC system columns.
+     *
+     * @param schema the table schema
+     * @param includeSystemColumns whether to include _version and _is_deleted columns
+     * @return list of column names
+     */
+    public static List<String> getColumnNames(Schema schema, boolean includeSystemColumns) {
+        List<String> columnNames = new ArrayList<>();
+        for (Column column : schema.getColumns()) {
+            columnNames.add(column.getName());
+        }
+        if (includeSystemColumns && !schema.primaryKeys().isEmpty()) {
+            columnNames.add(VERSION_COLUMN);
+            columnNames.add(IS_DELETED_COLUMN);
+        }
+        return columnNames;
     }
 
     /**

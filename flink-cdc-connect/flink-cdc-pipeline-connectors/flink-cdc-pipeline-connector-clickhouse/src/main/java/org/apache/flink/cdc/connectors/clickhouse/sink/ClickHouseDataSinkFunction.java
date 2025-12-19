@@ -43,11 +43,35 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.stream.Collectors;
 
+import static org.apache.flink.cdc.connectors.clickhouse.sink.ClickHouseConstants.IS_DELETED_COLUMN;
+import static org.apache.flink.cdc.connectors.clickhouse.sink.ClickHouseConstants.IS_DELETED_FALSE;
+import static org.apache.flink.cdc.connectors.clickhouse.sink.ClickHouseConstants.IS_DELETED_TRUE;
+import static org.apache.flink.cdc.connectors.clickhouse.sink.ClickHouseConstants.VERSION_COLUMN;
 import static org.apache.flink.cdc.connectors.clickhouse.sink.ClickHouseUtils.createFieldGetter;
 import static org.apache.flink.cdc.connectors.clickhouse.sink.ClickHouseUtils.quoteIdentifier;
 
-/** Sink function for writing events to ClickHouse. */
+/**
+ * Sink function for writing CDC events to ClickHouse using ReplacingMergeTree.
+ *
+ * <p>This implementation uses ReplacingMergeTree with version and is_deleted columns to handle CDC
+ * operations:
+ *
+ * <ul>
+ *   <li><b>INSERT</b>: Insert row with _version=N, _is_deleted=0
+ *   <li><b>UPDATE</b>: Insert new row with _version=N+1, _is_deleted=0 (old row replaced on merge)
+ *   <li><b>DELETE</b>: Insert row with _version=N+1, _is_deleted=1 (soft delete, filtered by FINAL)
+ * </ul>
+ *
+ * <p>Benefits of this approach:
+ *
+ * <ul>
+ *   <li>No mutations (ALTER TABLE DELETE) which are heavy operations
+ *   <li>Append-only writes for high throughput
+ *   <li>Consistent results with SELECT * FROM table FINAL
+ * </ul>
+ */
 public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
 
     private static final long serialVersionUID = 1L;
@@ -64,10 +88,10 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
 
     private transient Connection connection;
     private transient Map<TableId, TableInfo> tableInfoMap;
-    private transient Map<TableId, List<OperationData>> batchBuffer;
+    private transient Map<TableId, List<RowData>> batchBuffer;
     private transient Map<TableId, PreparedStatement> insertStatements;
-    private transient Map<TableId, PreparedStatement> deleteStatements;
     private transient long lastFlushTime;
+    private transient VersionGenerator versionGenerator;
 
     public ClickHouseDataSinkFunction(
             String url,
@@ -89,12 +113,22 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
     @Override
     public void open(Configuration parameters) throws Exception {
         super.open(parameters);
+
+        // Initialize version generator with subtask ID for uniqueness across parallel instances
+        int subtaskId = getRuntimeContext().getTaskInfo().getIndexOfThisSubtask();
+        versionGenerator = new VersionGenerator(subtaskId);
+        LOG.info(
+                "Initialized VersionGenerator for subtask {} (parallelism: {})",
+                subtaskId,
+                getRuntimeContext().getTaskInfo().getNumberOfParallelSubtasks());
+
         // Explicitly load ClickHouse driver (service file excluded from JAR to avoid conflicts)
         try {
             Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
         } catch (ClassNotFoundException e) {
             throw new RuntimeException("Failed to load ClickHouse JDBC driver", e);
         }
+
         // Build JDBC URL with HTTP protocol and disable compression
         String jdbcUrl;
         if (url.startsWith("jdbc:")) {
@@ -111,10 +145,10 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
         properties.setProperty("compress", "false");
         properties.setProperty("decompress", "false");
         connection = DriverManager.getConnection(jdbcUrl, properties);
+
         tableInfoMap = new HashMap<>();
         batchBuffer = new HashMap<>();
         insertStatements = new HashMap<>();
-        deleteStatements = new HashMap<>();
         lastFlushTime = System.currentTimeMillis();
     }
 
@@ -141,8 +175,10 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
             }
             newSchema = SchemaUtils.applySchemaChangeEvent(tableInfo.schema, event);
         }
+
         TableInfo tableInfo = new TableInfo();
         tableInfo.schema = newSchema;
+        tableInfo.hasPrimaryKey = !newSchema.primaryKeys().isEmpty();
         tableInfo.fieldGetters = new RecordData.FieldGetter[newSchema.getColumnCount()];
         for (int i = 0; i < newSchema.getColumnCount(); i++) {
             tableInfo.fieldGetters[i] =
@@ -150,45 +186,48 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
         }
         tableInfoMap.put(tableId, tableInfo);
 
-        // Prepare INSERT and DELETE statements for the table
-        prepareStatements(tableId, newSchema);
+        // Prepare INSERT statement for the table
+        prepareInsertStatement(tableId, newSchema, tableInfo.hasPrimaryKey);
     }
 
-    private void prepareStatements(TableId tableId, Schema schema) {
+    private void prepareInsertStatement(TableId tableId, Schema schema, boolean hasPrimaryKey) {
         try {
+            // Close existing statement if any
+            PreparedStatement existingPs = insertStatements.get(tableId);
+            if (existingPs != null) {
+                existingPs.close();
+            }
+
+            // Build column list (user columns + system columns for tables with PK)
             List<String> columnNames = new ArrayList<>();
             for (Column column : schema.getColumns()) {
                 columnNames.add(column.getName());
             }
 
-            // Prepare INSERT statement
+            // Add system columns for CDC if table has primary key
+            if (hasPrimaryKey) {
+                columnNames.add(VERSION_COLUMN);
+                columnNames.add(IS_DELETED_COLUMN);
+            }
+
+            // Build INSERT statement
             String insertSQL =
                     "INSERT INTO "
                             + quoteIdentifier(tableId.getSchemaName())
                             + "."
                             + quoteIdentifier(tableId.getTableName())
                             + " ("
-                            + String.join(
-                                    ", ",
-                                    columnNames.stream()
-                                            .map(ClickHouseUtils::quoteIdentifier)
-                                            .collect(java.util.stream.Collectors.toList()))
+                            + columnNames.stream()
+                                    .map(ClickHouseUtils::quoteIdentifier)
+                                    .collect(Collectors.joining(", "))
                             + ") VALUES ("
-                            + String.join(
-                                    ", ",
-                                    columnNames.stream()
-                                            .map(c -> "?")
-                                            .collect(java.util.stream.Collectors.toList()))
+                            + columnNames.stream().map(c -> "?").collect(Collectors.joining(", "))
                             + ")";
 
             PreparedStatement insertPs = connection.prepareStatement(insertSQL);
             insertStatements.put(tableId, insertPs);
 
-            // Prepare DELETE statement if table has primary keys
-            if (!schema.primaryKeys().isEmpty()) {
-                // DELETE statement will be built dynamically based on primary keys
-                // We'll use ALTER TABLE DELETE WHERE for better performance
-            }
+            LOG.debug("Prepared INSERT statement for {}: {}", tableId, insertSQL);
         } catch (SQLException e) {
             throw new RuntimeException("Failed to prepare statements for " + tableId, e);
         }
@@ -199,28 +238,31 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
         TableInfo tableInfo = tableInfoMap.get(tableId);
         Preconditions.checkNotNull(tableInfo, tableId + " is not existed");
 
-        OperationData operationData;
+        RowData rowData;
         switch (event.op()) {
             case INSERT:
             case UPDATE:
             case REPLACE:
-                // For UPDATE: With ReplacingMergeTree, we insert the new row
-                // ClickHouse will automatically replace the old row with the same primary key
-                Object[] rowData = extractRowData(tableInfo, event.after());
-                operationData = new OperationData(OperationType.INSERT, rowData, null);
+                // INSERT and UPDATE: Insert row with _is_deleted=0
+                // For UPDATE, ReplacingMergeTree will keep the row with highest _version
+                Object[] insertData = extractRowData(tableInfo, event.after());
+                rowData = new RowData(insertData, IS_DELETED_FALSE);
                 break;
+
             case DELETE:
-                // For DELETE: Use ALTER TABLE DELETE WHERE with primary key conditions
-                RecordData beforeRecord = event.before();
-                operationData = new OperationData(OperationType.DELETE, null, beforeRecord);
+                // DELETE: Insert row with _is_deleted=1 (soft delete)
+                // ReplacingMergeTree with is_deleted will filter these during FINAL queries
+                Object[] deleteData = extractRowData(tableInfo, event.before());
+                rowData = new RowData(deleteData, IS_DELETED_TRUE);
                 break;
+
             default:
                 throw new UnsupportedOperationException(
                         "Don't support operation type " + event.op());
         }
 
         // Add to batch buffer
-        batchBuffer.computeIfAbsent(tableId, k -> new ArrayList<>()).add(operationData);
+        batchBuffer.computeIfAbsent(tableId, k -> new ArrayList<>()).add(rowData);
 
         // Flush if batch size reached or flush interval elapsed
         if (shouldFlush(tableId)) {
@@ -237,7 +279,7 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
     }
 
     private boolean shouldFlush(TableId tableId) {
-        List<OperationData> buffer = batchBuffer.get(tableId);
+        List<RowData> buffer = batchBuffer.get(tableId);
         if (buffer == null || buffer.isEmpty()) {
             return false;
         }
@@ -246,7 +288,7 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
     }
 
     private void flush(TableId tableId) throws SQLException {
-        List<OperationData> buffer = batchBuffer.get(tableId);
+        List<RowData> buffer = batchBuffer.get(tableId);
         if (buffer == null || buffer.isEmpty()) {
             return;
         }
@@ -266,41 +308,35 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
         try {
             connection.setAutoCommit(false);
 
-            // Separate INSERT and DELETE operations
-            List<Object[]> insertBatch = new ArrayList<>();
-            List<RecordData> deleteBatch = new ArrayList<>();
+            for (RowData rowData : buffer) {
+                int paramIndex = 1;
 
-            for (OperationData opData : buffer) {
-                if (opData.operationType == OperationType.INSERT) {
-                    insertBatch.add(opData.rowData);
-                } else if (opData.operationType == OperationType.DELETE) {
-                    deleteBatch.add(opData.beforeRecord);
+                // Set user column values
+                for (Object value : rowData.columnValues) {
+                    insertPs.setObject(paramIndex++, value);
                 }
-            }
 
-            // Execute INSERT operations
-            if (!insertBatch.isEmpty()) {
-                for (Object[] rowData : insertBatch) {
-                    for (int i = 0; i < rowData.length; i++) {
-                        insertPs.setObject(i + 1, rowData[i]);
-                    }
-                    insertPs.addBatch();
+                // Set system columns for tables with primary key
+                if (tableInfo.hasPrimaryKey) {
+                    // _version: unique, monotonically increasing
+                    long version = versionGenerator.nextVersion();
+                    insertPs.setLong(paramIndex++, version);
+
+                    // _is_deleted: 0 for active rows, 1 for deleted rows
+                    insertPs.setInt(paramIndex++, rowData.isDeleted);
                 }
-                insertPs.executeBatch();
+
+                insertPs.addBatch();
             }
 
-            // Execute DELETE operations using ALTER TABLE DELETE WHERE
-            if (!deleteBatch.isEmpty()) {
-                executeDeletes(tableId, tableInfo, deleteBatch);
-            }
-
+            insertPs.executeBatch();
             connection.commit();
+
             LOG.debug(
-                    "Flushed {} operations ({} inserts, {} deletes) to table {}",
+                    "Flushed {} rows to table {} (subtask {})",
                     buffer.size(),
-                    insertBatch.size(),
-                    deleteBatch.size(),
-                    tableId);
+                    tableId,
+                    getRuntimeContext().getTaskInfo().getIndexOfThisSubtask());
         } catch (SQLException e) {
             connection.rollback();
             throw e;
@@ -311,51 +347,27 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
         }
     }
 
-    private void executeDeletes(
-            TableId tableId, TableInfo tableInfo, List<RecordData> deleteRecords)
-            throws SQLException {
-        if (tableInfo.schema.primaryKeys().isEmpty()) {
-            throw new UnsupportedOperationException(
-                    "DELETE operations require primary keys, but table "
-                            + tableId
-                            + " has no primary keys");
-        }
-
-        try (java.sql.Statement stmt = connection.createStatement()) {
-            for (RecordData record : deleteRecords) {
-                String whereClause =
-                        ClickHouseUtils.buildPrimaryKeyWhereClause(
-                                tableInfo.schema, record, zoneId);
-                String deleteSQL =
-                        "ALTER TABLE "
-                                + quoteIdentifier(tableId.getSchemaName())
-                                + "."
-                                + quoteIdentifier(tableId.getTableName())
-                                + " DELETE WHERE "
-                                + whereClause;
-                stmt.execute(deleteSQL);
-            }
-        }
-    }
-
     @Override
     public void close() throws Exception {
         // Flush remaining data
-        for (TableId tableId : batchBuffer.keySet()) {
-            if (!batchBuffer.get(tableId).isEmpty()) {
-                flush(tableId);
+        if (batchBuffer != null) {
+            for (TableId tableId : batchBuffer.keySet()) {
+                if (!batchBuffer.get(tableId).isEmpty()) {
+                    flush(tableId);
+                }
             }
         }
 
         // Close prepared statements
-        for (PreparedStatement ps : insertStatements.values()) {
-            if (ps != null) {
-                ps.close();
-            }
-        }
-        for (PreparedStatement ps : deleteStatements.values()) {
-            if (ps != null) {
-                ps.close();
+        if (insertStatements != null) {
+            for (PreparedStatement ps : insertStatements.values()) {
+                if (ps != null) {
+                    try {
+                        ps.close();
+                    } catch (SQLException e) {
+                        LOG.warn("Error closing prepared statement", e);
+                    }
+                }
             }
         }
 
@@ -366,28 +378,21 @@ public class ClickHouseDataSinkFunction extends RichSinkFunction<Event> {
         super.close();
     }
 
-    /** Table information. */
+    /** Table information including schema and field getters. */
     private static class TableInfo {
         Schema schema;
+        boolean hasPrimaryKey;
         RecordData.FieldGetter[] fieldGetters;
     }
 
-    /** Operation type for batch processing. */
-    private enum OperationType {
-        INSERT,
-        DELETE
-    }
+    /** Row data holder with column values and delete flag. */
+    private static class RowData {
+        final Object[] columnValues;
+        final int isDeleted;
 
-    /** Operation data holder. */
-    private static class OperationData {
-        final OperationType operationType;
-        final Object[] rowData; // For INSERT operations
-        final RecordData beforeRecord; // For DELETE operations
-
-        OperationData(OperationType operationType, Object[] rowData, RecordData beforeRecord) {
-            this.operationType = operationType;
-            this.rowData = rowData;
-            this.beforeRecord = beforeRecord;
+        RowData(Object[] columnValues, int isDeleted) {
+            this.columnValues = columnValues;
+            this.isDeleted = isDeleted;
         }
     }
 }

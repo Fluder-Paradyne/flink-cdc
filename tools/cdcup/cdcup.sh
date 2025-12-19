@@ -77,9 +77,7 @@ elif [ "$1" == 'pipeline' ]; then
   if test -f ./cdc/lib/mysql-connector-java.jar; then
       startup_script="$startup_script --jar lib/mysql-connector-java.jar"
   fi
-  if test -f ./cdc/lib/clickhouse-jdbc.jar; then
-      startup_script="$startup_script --jar lib/clickhouse-jdbc.jar"
-  fi
+  # Note: clickhouse-jdbc is now bundled in the connector fat JAR
   docker compose exec jobmanager bash -c "$startup_script"
 elif [ "$1" == 'flink' ]; then
   port_info="$(docker compose port jobmanager 8081)"
