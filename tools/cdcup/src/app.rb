@@ -74,6 +74,9 @@ FLINK_CDC_VERSIONS = %w[
   3.1.1
   3.2.0
   3.2.1
+  3.3.0
+  3.4.0
+  3.5.0
 ].freeze
 
 puts
