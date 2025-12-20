@@ -42,8 +42,8 @@ class Postgres
         'port' => 5432,
         'username' => 'postgres',
         'password' => '',
-        'tables' => '\.*.\.*',
-        'slot.name' => 'flink-cdc',
+        'tables' => 'postgres.public.\\.*',
+        'slot.name' => 'flinkcdc',
       }
     end
   end
