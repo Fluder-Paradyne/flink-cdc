@@ -80,6 +80,8 @@ elif [ "$1" == 'flink' ]; then
   printf "🚩 Visit Flink Dashboard at: http://localhost:%s\n" "${port_info##*:}"
 elif [ "$1" == 'mysql' ]; then
   docker compose exec -it mysql bash -c "mysql -uroot" || echo "❌ Unable to find MySQL container."
+elif [ "$1" == 'postgres' ]; then
+  docker compose exec -it postgres bash -c "psql -U postgres" || echo "❌ Unable to find Postgres container."
 elif [ "$1" == 'stop' ]; then
   printf "🚩 Stopping playground...\n"
   docker compose stop

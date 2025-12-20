@@ -22,6 +22,7 @@ require 'yaml'
 require_relative 'download_libs'
 
 require_relative 'source/my_sql'
+require_relative 'source/psql'
 require_relative 'source/values_source'
 
 require_relative 'sink/doris'
@@ -49,6 +50,7 @@ CDC_DATA_VOLUME = 'cdc-data'
 
 SOURCES = {
   mysql: MySQL,
+  postgres: Postgres,
   values: ValuesSource
 }.freeze
 
