@@ -80,6 +80,43 @@ CDC_VERSIONS = {
         https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-values/3.2.1/flink-cdc-pipeline-connector-values-3.2.1.jar
       ]
     },
+  '3.3.0': {
+      tar: 'https://dlcdn.apache.org/flink/flink-cdc-3.3.0/flink-cdc-3.3.0-bin.tar.gz',
+      connectors: %w[
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-mysql/3.3.0/flink-cdc-pipeline-connector-mysql-3.3.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-doris/3.3.0/flink-cdc-pipeline-connector-doris-3.3.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-starrocks/3.3.0/flink-cdc-pipeline-connector-starrocks-3.3.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-kafka/3.3.0/flink-cdc-pipeline-connector-kafka-3.3.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-paimon/3.3.0/flink-cdc-pipeline-connector-paimon-3.3.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-elasticsearch/3.3.0/flink-cdc-pipeline-connector-elasticsearch-3.3.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-values/3.3.0/flink-cdc-pipeline-connector-values-3.3.0.jar
+      ]
+    },
+  '3.4.0': {
+      tar: 'https://dlcdn.apache.org/flink/flink-cdc-3.4.0/flink-cdc-3.4.0-bin.tar.gz',
+      connectors: %w[
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-mysql/3.4.0/flink-cdc-pipeline-connector-mysql-3.4.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-doris/3.4.0/flink-cdc-pipeline-connector-doris-3.4.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-starrocks/3.4.0/flink-cdc-pipeline-connector-starrocks-3.4.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-kafka/3.4.0/flink-cdc-pipeline-connector-kafka-3.4.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-paimon/3.4.0/flink-cdc-pipeline-connector-paimon-3.4.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-elasticsearch/3.4.0/flink-cdc-pipeline-connector-elasticsearch-3.4.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-values/3.4.0/flink-cdc-pipeline-connector-values-3.4.0.jar
+      ]
+    },
+  '3.5.0': {
+      tar: 'https://dlcdn.apache.org/flink/flink-cdc-3.5.0/flink-cdc-3.5.0-bin.tar.gz',
+      connectors: %w[
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-mysql/3.5.0/flink-cdc-pipeline-connector-mysql-3.5.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-postgres/3.5.0/flink-cdc-pipeline-connector-postgres-3.5.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-doris/3.5.0/flink-cdc-pipeline-connector-doris-3.5.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-starrocks/3.5.0/flink-cdc-pipeline-connector-starrocks-3.5.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-kafka/3.5.0/flink-cdc-pipeline-connector-kafka-3.5.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-paimon/3.5.0/flink-cdc-pipeline-connector-paimon-3.5.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-elasticsearch/3.5.0/flink-cdc-pipeline-connector-elasticsearch-3.5.0.jar
+        https://repo1.maven.org/maven2/org/apache/flink/flink-cdc-pipeline-connector-values/3.5.0/flink-cdc-pipeline-connector-values-3.5.0.jar
+      ]
+    },
 }.freeze
 
 def download_cdc_bin(version, dest_path)

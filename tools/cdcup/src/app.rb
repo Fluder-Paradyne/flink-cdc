@@ -22,6 +22,7 @@ require 'yaml'
 require_relative 'download_libs'
 
 require_relative 'source/my_sql'
+require_relative 'source/psql'
 require_relative 'source/values_source'
 
 require_relative 'sink/doris'
@@ -49,6 +50,7 @@ CDC_DATA_VOLUME = 'cdc-data'
 
 SOURCES = {
   mysql: MySQL,
+  postgres: Postgres,
   values: ValuesSource
 }.freeze
 
@@ -74,6 +76,9 @@ FLINK_CDC_VERSIONS = %w[
   3.1.1
   3.2.0
   3.2.1
+  3.3.0
+  3.4.0
+  3.5.0
 ].freeze
 
 puts
