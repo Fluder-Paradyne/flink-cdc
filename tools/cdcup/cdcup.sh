@@ -19,7 +19,7 @@
 set -e
 
 display_help() {
-  echo "Usage: ./cdcup.sh { init | up | pipeline <yaml> | flink | mysql | stop | down | help }"
+  echo "Usage: ./cdcup.sh { init | up | pipeline <yaml> | flink | mysql | clickhouse | stop | down | help }"
   echo
   echo "Commands:"
   echo "    * init:"
@@ -36,6 +36,9 @@ display_help() {
   echo
   echo "    * mysql:"
   echo "        Open MySQL console."
+  echo
+  echo "    * clickhouse:"
+  echo "        Open ClickHouse console."
   echo
   echo "    * stop:"
   echo "        Stop all running playground containers."
@@ -74,12 +77,15 @@ elif [ "$1" == 'pipeline' ]; then
   if test -f ./cdc/lib/mysql-connector-java.jar; then
       startup_script="$startup_script --jar lib/mysql-connector-java.jar"
   fi
+  # Note: clickhouse-jdbc is now bundled in the connector fat JAR
   docker compose exec jobmanager bash -c "$startup_script"
 elif [ "$1" == 'flink' ]; then
   port_info="$(docker compose port jobmanager 8081)"
   printf "🚩 Visit Flink Dashboard at: http://localhost:%s\n" "${port_info##*:}"
 elif [ "$1" == 'mysql' ]; then
   docker compose exec -it mysql bash -c "mysql -uroot" || echo "❌ Unable to find MySQL container."
+elif [ "$1" == 'clickhouse' ]; then
+  docker compose exec -it clickhouse bash -c "clickhouse-client" || echo "❌ Unable to find ClickHouse container."
 elif [ "$1" == 'stop' ]; then
   printf "🚩 Stopping playground...\n"
   docker compose stop
