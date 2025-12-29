@@ -371,7 +371,17 @@ public abstract class DebeziumEventDeserializationSchema extends SourceRecordEve
         if (dbzObj instanceof String) {
             String str = (String) dbzObj;
             // TIMESTAMP_LTZ type is encoded in string type
-            Instant instant = Instant.parse(str);
+            // Debezium sends ZonedTimestamp in ISO 8601 format with timezone offset
+            // e.g., "2011-12-03T10:15:30.123456+01:00" or "2011-12-03T10:15:30Z"
+            // We parse it and convert to Instant (UTC)
+            Instant instant;
+            if (str.contains("+") || str.contains("Z") || str.lastIndexOf('-') > 10) {
+                // Has timezone information, parse as OffsetDateTime then convert to Instant
+                instant = java.time.OffsetDateTime.parse(str).toInstant();
+            } else {
+                // Pure UTC format
+                instant = Instant.parse(str);
+            }
             return LocalZonedTimestampData.fromInstant(instant);
         }
         throw new IllegalArgumentException(
