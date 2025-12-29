@@ -718,4 +718,113 @@ public class PostgresPipelineITCaseTest extends PostgresTestBase {
                         .primaryKey(Collections.singletonList("id"))
                         .build());
     }
+
+    /**
+     * Test for TIMESTAMPTZ type mapping to TIMESTAMP_LTZ.
+     *
+     * <p>This test verifies that PostgreSQL TIMESTAMPTZ columns are correctly mapped to
+     * TIMESTAMP_LTZ type. Without the fix in PostgresTypeUtils, this test would fail with
+     * NumberFormatException because the old code mapped TIMESTAMPTZ to ZonedTimestampType, causing
+     * a type mismatch between schema metadata and actual data.
+     */
+    @Test
+    public void testTimestampWithTimeZone() throws Exception {
+        inventoryDatabase.createAndInitialize();
+
+        // Create a table with TIMESTAMPTZ column
+        try (Connection connection =
+                        getJdbcConnection(POSTGRES_CONTAINER, inventoryDatabase.getDatabaseName());
+                Statement statement = connection.createStatement()) {
+            statement.execute(
+                    "CREATE TABLE inventory.events ("
+                            + "id SERIAL PRIMARY KEY, "
+                            + "event_name VARCHAR(255), "
+                            + "event_time TIMESTAMPTZ NOT NULL)");
+            statement.execute("ALTER TABLE inventory.events REPLICA IDENTITY FULL");
+
+            // Insert test data with explicit timezone
+            statement.execute(
+                    "INSERT INTO inventory.events (event_name, event_time) "
+                            + "VALUES ('test_event', '2020-07-17 18:00:22+08:00')");
+        }
+
+        PostgresSourceConfigFactory configFactory =
+                (PostgresSourceConfigFactory)
+                        new PostgresSourceConfigFactory()
+                                .hostname(POSTGRES_CONTAINER.getHost())
+                                .port(POSTGRES_CONTAINER.getMappedPort(POSTGRESQL_PORT))
+                                .username(TEST_USER)
+                                .password(TEST_PASSWORD)
+                                .databaseList(inventoryDatabase.getDatabaseName())
+                                .tableList("inventory.events")
+                                .startupOptions(StartupOptions.initial())
+                                .serverTimeZone("UTC");
+        configFactory.database(inventoryDatabase.getDatabaseName());
+        configFactory.slotName(slotName);
+        configFactory.decodingPluginName("pgoutput");
+
+        FlinkSourceProvider sourceProvider =
+                (FlinkSourceProvider)
+                        new PostgresDataSource(configFactory).getEventSourceProvider();
+        CloseableIterator<Event> events =
+                env.fromSource(
+                                sourceProvider.getSource(),
+                                WatermarkStrategy.noWatermarks(),
+                                PostgresDataSourceFactory.IDENTIFIER,
+                                new EventTypeInfo())
+                        .executeAndCollect();
+
+        TableId tableId = TableId.tableId("inventory", "events");
+
+        // Expected CreateTableEvent with TIMESTAMP_LTZ type
+        CreateTableEvent expectedCreateTableEvent =
+                new CreateTableEvent(
+                        tableId,
+                        Schema.newBuilder()
+                                .physicalColumn(
+                                        "id",
+                                        DataTypes.INT().notNull(),
+                                        null,
+                                        "nextval('inventory.events_id_seq'::regclass)")
+                                .physicalColumn("event_name", DataTypes.VARCHAR(255))
+                                .physicalColumn(
+                                        "event_time",
+                                        DataTypes.TIMESTAMP_LTZ(6)
+                                                .notNull()) // TIMESTAMPTZ -> TIMESTAMP_LTZ
+                                .primaryKey(Collections.singletonList("id"))
+                                .build());
+
+        // Fetch and verify events
+        List<Event> actual = new ArrayList<>();
+        int createTableEventCount = 0;
+        int dataChangeEventCount = 0;
+
+        // Collect events (CreateTableEvent + DataChangeEvent)
+        while ((createTableEventCount == 0 || dataChangeEventCount == 0) && events.hasNext()) {
+            Event event = events.next();
+            if (event instanceof CreateTableEvent) {
+                createTableEventCount++;
+                CreateTableEvent createTableEvent = (CreateTableEvent) event;
+                // Verify schema has TIMESTAMP_LTZ for event_time column
+                assertThat(createTableEvent.getSchema().getColumn("event_time")).isPresent();
+                assertThat(createTableEvent.getSchema().getColumn("event_time").get().getType())
+                        .isEqualTo(DataTypes.TIMESTAMP_LTZ(6).notNull());
+            } else if (event instanceof DataChangeEvent) {
+                dataChangeEventCount++;
+                actual.add(event);
+            }
+        }
+
+        // Verify we got the CreateTableEvent and DataChangeEvent
+        assertThat(createTableEventCount).isGreaterThan(0);
+        assertThat(dataChangeEventCount).isEqualTo(1);
+
+        // Verify the data change event can be read without NumberFormatException
+        // This would fail with the old code that mapped TIMESTAMPTZ to ZonedTimestampType
+        DataChangeEvent dataChangeEvent = (DataChangeEvent) actual.get(0);
+        assertThat(dataChangeEvent.after()).isNotNull();
+
+        // The fact that we can get here without NumberFormatException means the fix works
+        LOG.info("Successfully processed TIMESTAMPTZ column without type mismatch error");
+    }
 }
