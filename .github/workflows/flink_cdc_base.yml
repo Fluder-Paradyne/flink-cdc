@@ -146,7 +146,50 @@ env:
   flink-cdc-e2e-tests/flink-cdc-source-e2e-tests"
 
 jobs:
+  compile-e2e-dependencies:
+    # Pre-compile common modules for E2E tests to avoid redundant compilation
+    if: contains(fromJSON(inputs.modules), 'pipeline_e2e') || contains(fromJSON(inputs.modules), 'source_e2e')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        java-version: ${{ fromJSON(inputs.java-versions) }}
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Set JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java-version }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Set Maven 3.8.6
+        uses: stCarolas/setup-maven@v5
+        with:
+          maven-version: 3.8.6
+
+      - name: Compile common E2E dependencies
+        run: |
+          compile_modules="${{ env.MODULES_CORE }},${{ env.MODULES_PIPELINE_CONNECTORS }},${{ env.MODULES_MYSQL_SOURCE }},${{ env.MODULES_POSTGRES_SOURCE }},${{ env.MODULES_ORACLE }},${{ env.MODULES_MONGODB }},${{ env.MODULES_SQLSERVER }},${{ env.MODULES_TIDB }},${{ env.MODULES_OCEANBASE_SOURCE }},${{ env.MODULES_DB2 }},${{ env.MODULES_VITESS }}"
+          mvn --no-snapshot-updates -B -DskipTests -pl $compile_modules -am install
+
+      - name: Cache compiled artifacts
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.m2/repository
+            **/target
+          key: e2e-build-${{ matrix.java-version }}-${{ github.sha }}
+
   test:
+    needs: [compile-e2e-dependencies]
+    if: |
+      always() &&
+      (needs.compile-e2e-dependencies.result == 'success' || needs.compile-e2e-dependencies.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
@@ -190,6 +233,16 @@ jobs:
         uses: stCarolas/setup-maven@v5
         with:
           maven-version: 3.8.6
+
+      - name: Restore cached E2E dependencies
+        if: matrix.module == 'pipeline_e2e' || matrix.module == 'source_e2e'
+        id: cache-e2e
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.m2/repository
+            **/target
+          key: e2e-build-${{ matrix.java-version }}-${{ github.sha }}
 
       - name: Compile and test
         timeout-minutes: 90
@@ -270,11 +323,21 @@ jobs:
                modules=${{ env.MODULES_HUDI }}
               ;;
               ("pipeline_e2e")
-               compile_modules="${{ env.MODULES_CORE }},${{ env.MODULES_PIPELINE_CONNECTORS }},${{ env.MODULES_MYSQL_SOURCE }},${{ env.MODULES_POSTGRES_SOURCE }},${{ env.MODULES_ORACLE }},${{ env.MODULES_MONGODB }},${{ env.MODULES_SQLSERVER }},${{ env.MODULES_TIDB }},${{ env.MODULES_OCEANBASE_SOURCE }},${{ env.MODULES_DB2 }},${{ env.MODULES_VITESS }},${{ env.MODULES_PIPELINE_E2E }}"
+               # If cache hit, compile only E2E module; otherwise compile all dependencies
+               if [ "${{ steps.cache-e2e.outputs.cache-hit }}" == "true" ]; then
+                 compile_modules="${{ env.MODULES_PIPELINE_E2E }}"
+               else
+                 compile_modules="${{ env.MODULES_CORE }},${{ env.MODULES_PIPELINE_CONNECTORS }},${{ env.MODULES_MYSQL_SOURCE }},${{ env.MODULES_POSTGRES_SOURCE }},${{ env.MODULES_ORACLE }},${{ env.MODULES_MONGODB }},${{ env.MODULES_SQLSERVER }},${{ env.MODULES_TIDB }},${{ env.MODULES_OCEANBASE_SOURCE }},${{ env.MODULES_DB2 }},${{ env.MODULES_VITESS }},${{ env.MODULES_PIPELINE_E2E }}"
+               fi
                modules=${{ env.MODULES_PIPELINE_E2E }}
               ;;
               ("source_e2e")
-               compile_modules="${{ env.MODULES_CORE }},${{ env.MODULES_PIPELINE_CONNECTORS }},${{ env.MODULES_MYSQL_SOURCE }},${{ env.MODULES_POSTGRES_SOURCE }},${{ env.MODULES_ORACLE }},${{ env.MODULES_MONGODB }},${{ env.MODULES_SQLSERVER }},${{ env.MODULES_TIDB }},${{ env.MODULES_OCEANBASE_SOURCE }},${{ env.MODULES_DB2 }},${{ env.MODULES_VITESS }},${{ env.MODULES_SOURCE_E2E }}"
+               # If cache hit, compile only E2E module; otherwise compile all dependencies
+               if [ "${{ steps.cache-e2e.outputs.cache-hit }}" == "true" ]; then
+                 compile_modules="${{ env.MODULES_SOURCE_E2E }}"
+               else
+                 compile_modules="${{ env.MODULES_CORE }},${{ env.MODULES_PIPELINE_CONNECTORS }},${{ env.MODULES_MYSQL_SOURCE }},${{ env.MODULES_POSTGRES_SOURCE }},${{ env.MODULES_ORACLE }},${{ env.MODULES_MONGODB }},${{ env.MODULES_SQLSERVER }},${{ env.MODULES_TIDB }},${{ env.MODULES_OCEANBASE_SOURCE }},${{ env.MODULES_DB2 }},${{ env.MODULES_VITESS }},${{ env.MODULES_SOURCE_E2E }}"
+               fi
                modules=${{ env.MODULES_SOURCE_E2E }}
               ;;
           esac
