@@ -148,12 +148,15 @@ env:
 jobs:
   compile-e2e-dependencies:
     # Pre-compile common modules for E2E tests to avoid redundant compilation
+    # This job runs once per Java version and Flink version combination
+    # Parallelism variations reuse the same compiled artifacts (parallelism is runtime-only)
     if: contains(fromJSON(inputs.modules), 'pipeline_e2e') || contains(fromJSON(inputs.modules), 'source_e2e')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       matrix:
         java-version: ${{ fromJSON(inputs.java-versions) }}
+        flink-version: ${{ fromJSON(inputs.flink-versions) }}
     steps:
       - name: Check out repository code
         uses: actions/checkout@v4
@@ -175,7 +178,11 @@ jobs:
       - name: Compile common E2E dependencies
         run: |
           compile_modules="${{ env.MODULES_CORE }},${{ env.MODULES_PIPELINE_CONNECTORS }},${{ env.MODULES_MYSQL_SOURCE }},${{ env.MODULES_POSTGRES_SOURCE }},${{ env.MODULES_ORACLE }},${{ env.MODULES_MONGODB }},${{ env.MODULES_SQLSERVER }},${{ env.MODULES_TIDB }},${{ env.MODULES_OCEANBASE_SOURCE }},${{ env.MODULES_DB2 }},${{ env.MODULES_VITESS }}"
-          mvn --no-snapshot-updates -B -DskipTests -pl $compile_modules -am install
+          build_maven_parameter=""
+          if [ ! -z "${{ matrix.flink-version }}" ] && [ "${{ matrix.flink-version }}" != "generic" ]; then
+            build_maven_parameter="-DspecifiedFlinkVersion=${{ matrix.flink-version }}"
+          fi
+          mvn --no-snapshot-updates -B -DskipTests $build_maven_parameter -pl $compile_modules -am install
 
       - name: Cache compiled artifacts
         uses: actions/cache/save@v4
@@ -183,7 +190,7 @@ jobs:
           path: |
             ~/.m2/repository
             **/target
-          key: e2e-build-${{ matrix.java-version }}-${{ github.sha }}
+          key: e2e-build-${{ matrix.java-version }}-${{ matrix.flink-version }}-${{ github.sha }}
 
   test:
     needs: [compile-e2e-dependencies]
@@ -242,7 +249,7 @@ jobs:
           path: |
             ~/.m2/repository
             **/target
-          key: e2e-build-${{ matrix.java-version }}-${{ github.sha }}
+          key: e2e-build-${{ matrix.java-version }}-${{ matrix.flink-version }}-${{ github.sha }}
 
       - name: Compile and test
         timeout-minutes: 90
